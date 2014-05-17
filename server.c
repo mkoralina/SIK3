@@ -140,7 +140,7 @@ void initiate_client() {
 
 /* Tworzy gniazdo centrali */
 void create_main_socket() {
-  	client[0].fd = socket(PF_INET, SOCK_STREAM, 0); 
+  	client[0].fd = socket(AF_INET, SOCK_STREAM, 0); 
   	if (client[0].fd < 0) {
     	syserr("Opening stream socket");
   	}
@@ -363,11 +363,11 @@ void init_client_info(int fifo_queue_size) {
 int create_udp_socket() {
 	struct sockaddr_in server;
 
-	int sock_udp = socket(PF_INET, SOCK_DGRAM, 0); 
+	int sock_udp = socket(AF_INET, SOCK_DGRAM, 0); 
     if (sock_udp < 0)
         syserr("socket"); 
 
-	server.sin_family = PF_INET; 
+	server.sin_family = AF_INET; 
   	server.sin_addr.s_addr = htonl(INADDR_ANY); //we listen on all interfaces
   	server.sin_port = htons(port_num); //port num podany na wejsciu 
 	
@@ -437,7 +437,7 @@ int main (int argc, char *argv[]) {
   	if(!base) syserr("Error creating base.");
 
   	evutil_socket_t listener_socket;
-  	listener_socket = socket(PF_INET, SOCK_STREAM, 0);
+  	listener_socket = socket(AF_INET, SOCK_STREAM, 0);
   	if(listener_socket == -1 ||
      	evutil_make_listen_socket_reuseable(listener_socket) ||
      	evutil_make_socket_nonblocking(listener_socket)) { 
@@ -446,7 +446,7 @@ int main (int argc, char *argv[]) {
   	}
 
   	struct sockaddr_in sin;
-  	sin.sin_family = PF_INET;
+  	sin.sin_family = AF_INET;
   	sin.sin_addr.s_addr = htonl(INADDR_ANY);
   	sin.sin_port = htons(4242);
   	if(bind(listener_socket, (struct sockaddr *)&sin, sizeof(sin)) == -1) {

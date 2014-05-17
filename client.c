@@ -43,8 +43,8 @@
 #include "err.h"
 
 
-
-
+//DO USUNIECIA!!!!!!
+#define PORT 14666
 
 
 #define BUF_SIZE 40 
@@ -60,7 +60,7 @@
 static const char bye_string[] = "BYE";
 
 //uzgodnic typy!
-int port_num;
+int port_num = PORT;
 char server_name[NAME_SIZE];
 int retransfer_lim = RETRANSMIT_LIMIT;
 int sock_udp;
@@ -106,7 +106,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
 {
     printf("Czytanie z stdin\n");
     struct sockaddr_in my_address;
-    my_address.sin_family = PF_INET; 
+    my_address.sin_family = AF_INET; 
     //my_address.sin_addr.s_addr = htonl(INADDR_ANY); //to trzeba wziac z argumentow jakos!!!!!
     my_address.sin_port = htons((uint16_t) port_num);
 
@@ -191,7 +191,7 @@ void read_CLIENT_datagram(uint32_t *clientid) {
 
 
 int create_UDP_socket() {
-    int sock = socket(PF_INET, SOCK_DGRAM, 0);
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         syserr("socket");
     }
@@ -226,7 +226,7 @@ int main (int argc, char *argv[]) {
 
     struct addrinfo addr_hints = {
         .ai_flags = 0,
-        .ai_family = PF_INET,
+        .ai_family = AF_INET,
         .ai_socktype = SOCK_STREAM,
         .ai_protocol = 0,
         .ai_addrlen = 0,
