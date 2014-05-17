@@ -430,12 +430,36 @@ int main (int argc, char *argv[]) {
 
   if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
 
-  printf("Entering dispatch loop.\n");
-  if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
-  printf("Dispatch loop finished.\n");
 
-  event_free(listener_socket_event);
-  event_base_free(base);
+
+	pid_t pid;
+
+  	switch (pid = fork()) {
+    	case -1:
+            syserr("fork()");
+    	case 0: 
+            //jestem w dziecku
+            //ono dalej niech sie zajmuje obsluga TCP
+		    printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
+
+			printf("Entering dispatch loop.\n");
+			if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
+			printf("Dispatch loop finished.\n");
+
+			event_free(listener_socket_event);
+			event_base_free(base);
+
+            exit(0);
+    	default:
+            break;        
+
+  }
+
+  printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie budowa i obsluga UDP\n",getpid());
+
+
+
+
 
 
 

@@ -109,8 +109,6 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
   unsigned char buf[BUF_SIZE+1];
 
 
-
-
   int r = read(descriptor, buf, BUF_SIZE);
   if(r < 0) syserr("read (from stdin)");
   if(r == 0) {
@@ -252,13 +250,18 @@ int main (int argc, char *argv[]) {
   if(event_add(stdin_event,NULL) == -1) syserr("event_add");
   
 
+    printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
+    printf("Entering dispatch loop.\n");
+    if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
+    printf("Dispatch loop finished.\n");
 
-  printf("Entering dispatch loop.\n");
-  if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
-  printf("Dispatch loop finished.\n");
+    bufferevent_free(bev);
+    event_base_free(base);
 
-  bufferevent_free(bev);
-  event_base_free(base);
+
+
+
+ 
 
 // END: LIBEVENT
 
