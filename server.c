@@ -161,11 +161,13 @@ struct connection_description {
 
 // indeks w tabeli jest numerem id klienta
 struct info {
+
 	int port_TCP;
 	int port_UDP;
 	int min_FIFO;
 	int max_FIFO;
 	char **buf_FIFO;
+	int buf_state;
 };
 
 struct info client_info[MAX_CLIENTS];
@@ -245,6 +247,38 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
   	printf("przeszlo\n");
 }
 
+
+void send_a_report() {
+	//wersja beta:
+	//create and print a report
+	printf("\n");
+	int i;
+  	for(i = 0; i < MAX_CLIENTS; i++)
+  		
+  		//jesli klient jest w systemie i jego kolejka aktywna
+    	
+    	//TU TRZEBA ODKOMENTOWac!
+
+    	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
+    	if(clients[i].ev) {	
+    		printf("klient %d : ",i);
+    		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
+    			 inet_ntoa(clients[i].address.sin_addr), 
+    			 ntohs(clients[i].address.sin_port),
+    			 sizeof(client_info[i].buf_FIFO),
+    			 fifo_queue_size,
+    			 client_info[i].min_FIFO,
+    			 client_info[i].max_FIFO
+    			 );
+    	}
+      			
+    //normalnie powinno być:
+    //create a report	
+	//multisend a report
+	
+}
+
+
 //obsluguje polaczenie nowego klienta
 void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 {
@@ -274,10 +308,14 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
   //zanim pozwolimy na czytanie od klienta: przesyłamy mu jego numer
   //identyfikacyjny ten numer to moze byc numer gniazda??????
 
-  client_info[cl->id].port_TCP = ntohs(sin.sin_port); 
+  //dodaj info o kliencie 
+  client_info[cl->id].port_TCP = ntohs(sin.sin_port);
+
+
+
 
   send_CLIENT_datagram(connection_socket,cl->id);
-
+ 
 
 
 
@@ -287,7 +325,7 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
   if(!an_event) syserr("Error creating event.");
   cl->ev = an_event;
   if(event_add(an_event, NULL) == -1) syserr("Error adding an event to a base.");
-
+send_a_report();
 
 }
 
@@ -298,19 +336,18 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 
 
 
-void init_buf_FIFOs(int fifo_queue_size) {
+void init_client_info(int fifo_queue_size) {
 	memset(client_info, 0, sizeof(client_info));
   	int i;
   	for(i = 0; i < MAX_CLIENTS; i++) {
   		client_info[i].buf_FIFO = malloc(fifo_queue_size * sizeof(char*));
+  		client_info[i].min_FIFO = 0;
+  		client_info[i].max_FIFO = 0;
+  		if (fifo_high > 0)
+  			client_info[i].buf_state = FILLING;  		
+  		else client_info[i].buf_state = ACTIVE;  		
   	}
 }
-
-
-
-
-
-
 
 
 
@@ -329,7 +366,7 @@ int main (int argc, char *argv[]) {
     }
 
 	get_parameters(argc, argv);
-	init_buf_FIFOs(fifo_queue_size);
+	init_client_info(fifo_queue_size);
 
 	/* Ctrl-C konczy porogram */
   	if (signal(SIGINT, catch_int) == SIG_ERR) {
@@ -399,6 +436,7 @@ int main (int argc, char *argv[]) {
 
   event_free(listener_socket_event);
   event_base_free(base);
+
 
 
 // </LIBEVENT
