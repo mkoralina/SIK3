@@ -153,22 +153,32 @@ static void catch_int (int sig) {
 // LIBEVENT
 
 struct connection_description {
+  int id;	
   struct sockaddr_in address;
   evutil_socket_t sock;
   struct event *ev;
 };
 
-struct client_info {
-	uint32_t id;
-	int port_TDP;
+// indeks w tabeli jest numerem id klienta
+struct info {
+	int port_TCP;
 	int port_UDP;
-}
+	int min_FIFO;
+	int max_FIFO;
+	char **buf_FIFO;
+};
+
+struct info client_info[MAX_CLIENTS];
 
 struct connection_description clients[MAX_CLIENTS];
 
 void init_clients(void)
 {
   memset(clients, 0, sizeof(clients));
+  int i;
+  for(i = 0; i < MAX_CLIENTS; i++) {
+  	clients[i].id = i;
+  }
 }
 
 struct connection_description *get_client_slot(void)
@@ -206,12 +216,7 @@ void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
   //wypisujemy adres i port klienta ladnie
   printf("[%s:%d] %s\n", inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port), buf);
 
-  //odsylamy klientowi zawartosc bufora
-  
-  /*char msg[] = "A Asia ma psa";
-  int w = write(sock, msg, sizeof(msg));
-  if (w != sizeof(msg)) syserr("nie przeszlo");  
-  */
+
 }
 
 
@@ -269,7 +274,9 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
   //zanim pozwolimy na czytanie od klienta: przesyłamy mu jego numer
   //identyfikacyjny ten numer to moze byc numer gniazda??????
 
-  send_CLIENT_datagram(connection_socket,ntohs(sin.sin_port));
+  client_info[cl->id].port_TCP = ntohs(sin.sin_port); 
+
+  send_CLIENT_datagram(connection_socket,cl->id);
 
 
 
@@ -291,7 +298,13 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 
 
 
-
+void init_buf_FIFOs(int fifo_queue_size) {
+	memset(client_info, 0, sizeof(client_info));
+  	int i;
+  	for(i = 0; i < MAX_CLIENTS; i++) {
+  		client_info[i].buf_FIFO = malloc(fifo_queue_size * sizeof(char*));
+  	}
+}
 
 
 
@@ -316,6 +329,7 @@ int main (int argc, char *argv[]) {
     }
 
 	get_parameters(argc, argv);
+	init_buf_FIFOs(fifo_queue_size);
 
 	/* Ctrl-C konczy porogram */
   	if (signal(SIGINT, catch_int) == SIG_ERR) {
