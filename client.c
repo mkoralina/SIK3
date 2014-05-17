@@ -45,13 +45,11 @@
 
 
 
-//LIBEVENT
+
 
 #define BUF_SIZE 40 
 
- // END: LIBEVENT
-
-
+ 
 #define BUFFER_SIZE 1024
 #define NAME_SIZE 1000 //ile to ma byc?
 
@@ -108,7 +106,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
 {
     printf("Czytanie z stdin\n");
     struct sockaddr_in my_address;
-    //my_address.sin_family = AF_INET; 
+    my_address.sin_family = PF_INET; 
     //my_address.sin_addr.s_addr = htonl(INADDR_ANY); //to trzeba wziac z argumentow jakos!!!!!
     my_address.sin_port = htons((uint16_t) port_num);
 
@@ -165,14 +163,6 @@ void an_event_cb(struct bufferevent *bev, short what, void *arg)
   printf("An event cb\n");
   if(what & BEV_EVENT_CONNECTED) {
     fprintf(stderr, "Connection made.\n");
-   /* unsigned char buf2[BUF_SIZE+1];
-    while(evbuffer_get_length(bufferevent_get_input(bev))) {
-        printf("wchodzi w petle czytajaca INPUT od servera\n");
-        int r = bufferevent_read(bev, buf2, BUF_SIZE);
-        if(r == -1) syserr("bufferevent_read");
-        buf2[r] = 0;
-        printf("cliendid: %s\n", buf2);
-    }*/
     return;
   }
   if(what & BEV_EVENT_EOF) {
@@ -201,7 +191,7 @@ void read_CLIENT_datagram(uint32_t *clientid) {
 
 
 int create_UDP_socket() {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int sock = socket(PF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         syserr("socket");
     }
@@ -211,11 +201,11 @@ int create_UDP_socket() {
 
 
 int main (int argc, char *argv[]) {
-    int rc;
-    int sock;
+    //int rc;
+    //int sock;
 
-    struct addrinfo addr_hints_poll, *addr_result;
-    char line[BUFFER_SIZE];
+    //struct addrinfo addr_hints_poll, *addr_result;
+    //char line[BUFFER_SIZE];
 
     if (DEBUG && argc == 1) {
         printf("Client run with parameters: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
@@ -224,68 +214,53 @@ int main (int argc, char *argv[]) {
 
     get_parameters(argc, argv);
 
+    base = event_base_new();
+    if(!base) syserr("event_base_new");
+    bev = bufferevent_socket_new(base, -1, BEV_OPT_CLOSE_ON_FREE);
+    if(!bev) syserr("bufferevent_socket_new");
 
-// LIBEVENT
+    /* Funkcje, które mają zostać wywołane po wystąpieniu zdarzenia, ustalamy w wywołaniu bufferevent_setcb() */
+    bufferevent_setcb(bev, a_read_cb, NULL, an_event_cb, (void *)bev);
 
-    uint32_t clientid;
+    //TODO
 
-//M: tworze kontekst
-  base = event_base_new();
-  if(!base) syserr("event_base_new");
+    struct addrinfo addr_hints = {
+        .ai_flags = 0,
+        .ai_family = PF_INET,
+        .ai_socktype = SOCK_STREAM,
+        .ai_protocol = 0,
+        .ai_addrlen = 0,
+        .ai_addr = NULL,
+        .ai_canonname = NULL,
+        .ai_next = NULL
+    };
 
-  //M: tworze zdarzenie
-  // Gdy zamiast deskryptora pliku przekazujemy -1, oznacza to, że deskryptor pliku zostanie podany później
+    struct addrinfo *addr;
 
-  /* Wywołanie tej funkcji powoduje stworzenie struktury opisującej zdarzenia powiązanej
-   z deskryptorem i dwoma buforami - jednym do przechowywania danych wejściowych, drugim 
-   - wyjściowych. Bufory te są typu struct evbuffer, 
-  a wskaźniki do nich możemy uzyskać, korzystając z funkcji bufferevent_get_input(struct bufferevent *) 
-  i bufferevent_get_output(struct bufferevent *) */
-  bev = bufferevent_socket_new(base, -1, BEV_OPT_CLOSE_ON_FREE);
-  if(!bev) syserr("bufferevent_socket_new");
-
-  /* Funkcje, które mają zostać wywołane po wystąpieniu zdarzenia, ustalamy w wywołaniu bufferevent_setcb() */
-  bufferevent_setcb(bev, a_read_cb, NULL, an_event_cb, (void *)bev);
-
-  //TODO
-
-  struct addrinfo addr_hints = {
-    .ai_flags = 0,
-    .ai_family = AF_INET,
-    .ai_socktype = SOCK_STREAM,
-    .ai_protocol = 0,
-    .ai_addrlen = 0,
-    .ai_addr = NULL,
-    .ai_canonname = NULL,
-    .ai_next = NULL
-  };
-
-  struct addrinfo *addr;
-
-  if(getaddrinfo("localhost", "4242", &addr_hints, &addr)) syserr("getaddrinfo");
+    if(getaddrinfo("localhost", "4242", &addr_hints, &addr)) syserr("getaddrinfo");
 
 /* Pierwszym parametrem jest zdarzenie związane z buforem, następne dwa są takie 
    jak w systemowym connect(). Jeśli przy tworzeniu zdarzenia nie podaliśmy gniazda,
    to ta funkcja stworzy je dla nas. <- DYNAMICZNE TWORZENIE GNIAZD!*/
-  if(bufferevent_socket_connect(bev, addr->ai_addr, addr->ai_addrlen) == -1)
-    syserr("bufferevent_socket_connect");
-  freeaddrinfo(addr);
+    if(bufferevent_socket_connect(bev, addr->ai_addr, addr->ai_addrlen) == -1)
+        syserr("bufferevent_socket_connect");
+    freeaddrinfo(addr);
 
-  /* Samo podanie wskaźników do funkcji nie aktywuje ich, do tego używa się funkcji bufferevent_enable() */
-  if(bufferevent_enable(bev, EV_READ | EV_WRITE) == -1)
-    syserr("bufferevent_enable");
+    /* Samo podanie wskaźników do funkcji nie aktywuje ich, do tego używa się funkcji bufferevent_enable() */
+    if(bufferevent_enable(bev, EV_READ | EV_WRITE) == -1)
+        syserr("bufferevent_enable");
 
-    read_CLIENT_datagram(&clientid);  
+    //read_CLIENT_datagram(&clientid);  
     sock_udp = create_UDP_socket();  
 
-  struct event *stdin_event =
-    event_new(base, 0, EV_READ|EV_PERSIST, stdin_cb, NULL); // 0 - standardwowe wejscie
-  if(!stdin_event) syserr("event_new");
-  if(event_add(stdin_event,NULL) == -1) syserr("event_add");
+    struct event *stdin_event =
+        event_new(base, 0, EV_READ|EV_PERSIST, stdin_cb, NULL); // 0 - standardwowe wejscie
+    if(!stdin_event) syserr("event_new");
+    if(event_add(stdin_event,NULL) == -1) syserr("event_add");
   
 
  
-
+/*
     pid_t pid;
 
     switch (pid = fork()) {
@@ -305,7 +280,7 @@ int main (int argc, char *argv[]) {
             break;        
     }
 
-
+*/
 
     if (DEBUG) {
         printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie obsluga TCP\n",getpid());

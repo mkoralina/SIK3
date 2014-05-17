@@ -363,11 +363,11 @@ void init_client_info(int fifo_queue_size) {
 int create_udp_socket() {
 	struct sockaddr_in server;
 
-	int sock_udp = socket(AF_INET, SOCK_DGRAM, 0); 
+	int sock_udp = socket(PF_INET, SOCK_DGRAM, 0); 
     if (sock_udp < 0)
         syserr("socket"); 
 
-	server.sin_family = AF_INET; 
+	server.sin_family = PF_INET; 
   	server.sin_addr.s_addr = htonl(INADDR_ANY); //we listen on all interfaces
   	server.sin_port = htons(port_num); //port num podany na wejsciu 
 	
@@ -375,7 +375,10 @@ int create_udp_socket() {
       (socklen_t) sizeof(server)) < 0)
         syserr("bind");
 
-    printf("CREATE UDP SOCKET\n");
+    if (DEBUG) {
+  		printf("UDP : Server.sin_addr.s_addr: %hu\n", server.sin_addr.s_addr);
+  		printf("UDP : Accepting on port: %hu\n",ntohs(server.sin_port));
+  	}
     return sock_udp; 	
 }
 
@@ -428,145 +431,115 @@ int main (int argc, char *argv[]) {
   	// <LIBEVENT>
 	struct event_base *base;
 
-  init_clients();
+  	init_clients();
 
-  base = event_base_new();
-  if(!base) syserr("Error creating base.");
+  	base = event_base_new();
+  	if(!base) syserr("Error creating base.");
 
-  evutil_socket_t listener_socket;
-  listener_socket = socket(PF_INET, SOCK_STREAM, 0);
-  if(listener_socket == -1 ||
-     evutil_make_listen_socket_reuseable(listener_socket) ||
-     evutil_make_socket_nonblocking(listener_socket)) { 
-     //gniazdfo zwroci blad, jesli nie ma danych do odczytu (dlatego, ze mamy pod tym funkcje poll ktora nam zwraca, kiedy sa dane, wiec powinny byc
-    syserr("Error preparing socket.");
-  }
+  	evutil_socket_t listener_socket;
+  	listener_socket = socket(PF_INET, SOCK_STREAM, 0);
+  	if(listener_socket == -1 ||
+     	evutil_make_listen_socket_reuseable(listener_socket) ||
+     	evutil_make_socket_nonblocking(listener_socket)) { 
+     	//gniazdfo zwroci blad, jesli nie ma danych do odczytu (dlatego, ze mamy pod tym funkcje poll ktora nam zwraca, kiedy sa dane, wiec powinny byc
+    	syserr("Error preparing socket.");
+  	}
 
-  struct sockaddr_in sin;
-  sin.sin_family = AF_INET;
-  sin.sin_addr.s_addr = htonl(INADDR_ANY);
-  sin.sin_port = htons(4242);
-  if(bind(listener_socket, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
-    syserr("bind");
-  }
+  	struct sockaddr_in sin;
+  	sin.sin_family = PF_INET;
+  	sin.sin_addr.s_addr = htonl(INADDR_ANY);
+  	sin.sin_port = htons(4242);
+  	if(bind(listener_socket, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
+    	syserr("bind");
+  	}
 
-  if(listen(listener_socket, 5) == -1) syserr("listen");
+  	if(listen(listener_socket, 5) == -1) syserr("listen");
 
-  struct event *listener_socket_event = 
-    event_new(base, listener_socket, EV_READ|EV_PERSIST, listener_socket_cb, (void *)base);
-  if(!listener_socket_event) syserr("Error creating event for a listener socket.");
+  	struct event *listener_socket_event = 
+    	event_new(base, listener_socket, EV_READ|EV_PERSIST, listener_socket_cb, (void *)base);
+  	if(!listener_socket_event) syserr("Error creating event for a listener socket.");
 
-  if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
-
-
-
-pid_t pid;
-
-switch (pid = fork()) {
-	case -1:
-        syserr("fork()");
-	case 0: 
-        //jestem w dziecku
-        //ono dalej niech sie zajmuje obsluga TCP
-		if (DEBUG) {
-	    	printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
-		}
-
-		printf("Entering dispatch loop.\n");
-		if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
-		printf("Dispatch loop finished.\n");
-
-		event_free(listener_socket_event);
-		event_base_free(base);
-
-		if (DEBUG) { 
-			printf("[PID: %d] Jestem procesem potomnym, i zaraz sie skoncze\n",getpid());
-        }
-        exit(0);
-	default:
-        break;        
-}
-
-if (DEBUG) {
-	printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie budowa i obsluga UDP\n",getpid());
-}
+  	if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
 
 
-// </LIBEVENT
 
+	pid_t pid;
 
-// na razie dla ipv4 i na poll()
-// UDP
+	switch (pid = fork()) {
+		case -1:
+	        syserr("fork()");
+		case 0: 
+	        //jestem w dziecku
+	        //ono dalej niech sie zajmuje obsluga TCP
+			if (DEBUG) {
+		    	printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
+			}
 
-	struct sockaddr_in server;
-	char buf[BUF_SIZE];
-	ssize_t rval;
-	int msgsock, active_clients, i, ret;
-	int changes;
+			printf("Entering dispatch loop.\n");
+			if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
+			printf("Dispatch loop finished.\n");
+
+			event_free(listener_socket_event);
+			event_base_free(base);
+
+			if (DEBUG) { 
+				printf("[PID: %d] Jestem procesem potomnym, i zaraz sie skoncze\n",getpid());
+	        }
+	        exit(0);
+		default:
+	        break;        
+	}
+
+	if (DEBUG) {
+		printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie budowa i obsluga UDP\n",getpid());
+	}
+
+	//char buf[BUF_SIZE];
+	//ssize_t rval;
+	//int msgsock, active_clients, i, ret;
+	//int changes;
 
 	
-    ssize_t len_udp;
+    //ssize_t len_udp;
 
 
-  	initiate_client();
-  	active_clients = 0;
+  	//initiate_client();
+  	//active_clients = 0;
 
-
-  	//create_main_socket();
-  			//lub 
-	//creating IPv4 UDP socket
 	int sock_udp = create_udp_socket();
-    
-
- 	/* Bindowanie centralnego gniazda do swojego adresu */
-/*  	if (bind(client[0].fd, (struct sockaddr*)&server,
-           (socklen_t)sizeof(server)) < 0) {
-    	syserr("Binding stream socket");
-  	}
-*/	
 
 
-  	if (DEBUG) {
-  		printf("UDP : Server.sin_addr.s_addr: %hu\n", server.sin_addr.s_addr);
-  		printf("UDP : Accepting on port: %hu\n",ntohs(server.sin_port));
-  	}
 
-  	/* Tryb nasluchiwania */
-/*  	if (listen(client[0].fd, QUEUE_LENGTH) == -1) {
-    	syserr("Starting to listen");
-  	}
-*/
+	switch (pid = fork()) {
+		case -1:
+	        syserr("fork()");
+		case 0: 
+	        //jestem w dziecku
+	        //ono dalej niech sie zajmuje obsluga TCP
+			
 
-switch (pid = fork()) {
-	case -1:
-        syserr("fork()");
-	case 0: 
-        //jestem w dziecku
-        //ono dalej niech sie zajmuje obsluga TCP
-		
+			if (DEBUG) {
+		    	printf("[PID: %d] Jestem kolejnym procesem potomnym, to ja zajme sie miksowaniem i przesylaniem datagramu wyjsciowego\n",getpid());
+			}
+			//czekam 500 ms 
+			/*
+			while (1) {
+				struct timespec tim, tim2;
+	   			tim.tv_sec = 15; //powinno byc 0
+	   			tim.tv_nsec = 500000000L; //0.5 s
+				nanosleep(&tim, &tim2);
 
-		if (DEBUG) {
-	    	printf("[PID: %d] Jestem kolejnym procesem potomnym, to ja zajme sie miksowaniem i przesylaniem datagramu wyjsciowego\n",getpid());
-		}
-		//czekam 500 ms 
-		/*
-		while (1) {
-			struct timespec tim, tim2;
-   			tim.tv_sec = 15; //powinno byc 0
-   			tim.tv_nsec = 500000000L; //0.5 s
-			nanosleep(&tim, &tim2);
-
-			//changes = poll(client, _POSIX_OPEN_MAX, 100*interval);	
-			//nzl od tego, czy sa zmiany na deskryptorach, czy nie
-			printf("Miksuje wszystkie dane\n");
-			printf("Wysylam je w petli do wszytskich kleintow\n");	
-				//miksuj wszytskie dane
-				//wyslij
-		}*/	
-        exit(0);
-	default:
-        break;        
-}
+				//changes = poll(client, _POSIX_OPEN_MAX, 100*interval);	
+				//nzl od tego, czy sa zmiany na deskryptorach, czy nie
+				printf("Miksuje wszystkie dane\n");
+				printf("Wysylam je w petli do wszytskich kleintow\n");	
+					//miksuj wszytskie dane
+					//wyslij
+			}*/	
+	        exit(0);
+		default:
+	        break;        
+	}
 
 	if (DEBUG) {
 		printf("[PID: %d] Jestem dalej procesem macierzystym, bede odbierac po UDP i zajmowac sie klientami\n",getpid());
