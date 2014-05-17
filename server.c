@@ -375,6 +375,7 @@ int create_udp_socket() {
       (socklen_t) sizeof(server)) < 0)
         syserr("bind");
 
+    printf("CREATE UDP SOCKET\n");
     return sock_udp; 	
 }
 
@@ -385,6 +386,7 @@ void read_from_udp(int sock_udp) {
 	struct sockaddr_in client_udp;
 	socklen_t rcva_len = (ssize_t) sizeof(client_udp);
 
+	printf("READ FROM UDP\n");
 	for (;;) {
 		do {
 			flags = 0; // we do not request anything special
@@ -541,10 +543,13 @@ switch (pid = fork()) {
 	case 0: 
         //jestem w dziecku
         //ono dalej niech sie zajmuje obsluga TCP
+		
+
 		if (DEBUG) {
 	    	printf("[PID: %d] Jestem kolejnym procesem potomnym, to ja zajme sie miksowaniem i przesylaniem datagramu wyjsciowego\n",getpid());
 		}
 		//czekam 500 ms 
+		/*
 		while (1) {
 			struct timespec tim, tim2;
    			tim.tv_sec = 15; //powinno byc 0
@@ -557,7 +562,7 @@ switch (pid = fork()) {
 			printf("Wysylam je w petli do wszytskich kleintow\n");	
 				//miksuj wszytskie dane
 				//wyslij
-		}	
+		}*/	
         exit(0);
 	default:
         break;        

@@ -113,8 +113,10 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
     my_address.sin_port = htons((uint16_t) port_num);
 
     unsigned char buf[BUF_SIZE+1];
+    memset(buf, 0, sizeof(buf));
     socklen_t rcva_len = (socklen_t) sizeof(my_address);
     ssize_t snd_len;
+    //int snd_len;
     int flags = 0;
 
     int r = read(descriptor, buf, BUF_SIZE);
@@ -126,10 +128,14 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
         return;
     }
 
-    printf("Wysylanie po UDP komunikatu: %s o dlug: %zu\n",buf, strlen(buf));
+    printf("Wysylanie po UDP komunikatu: %s o sizeof: %zu\n",buf, sizeof(buf));
     snd_len = sendto(sock_udp, buf, sizeof(buf), flags,
-            (struct sockaddr *) &my_address, sizeof(my_address));
+            (struct sockaddr *) &my_address, rcva_len);    
 
+//    snd_len = sendto(sock_udp, &buf, sizeof(buf), flags,
+//            (struct sockaddr *) &my_address, rcva_len);
+
+    printf("snd_len: %zu\n", snd_len);
     //potem poprawic na wysylanie w petli , a tak naprawde tylko partiami wielkosci WIN
     if (snd_len < 0) { // != sizeof(buf)
             syserr("partial / failed sendto"); 
