@@ -36,6 +36,8 @@
 #include "mixer.h"
 #include "err.h"
 
+ #include <time.h>
+
 
 #define PORT 14666 //numer portu, z którego korzysta serwer do komunikacji (zarówno TCP, jak i UDP)
 #define FIFO_SIZE 10560 //rozmiar w bajtach kolejki FIFO, którą serwer utrzymuje dla każdego z klientów; ustawiany parametrem -F serwera
@@ -64,6 +66,7 @@ int fifo_queue_size = FIFO_SIZE;
 int fifo_low = FIFO_LOW_WATERMARK;
 int fifo_high;
 int buf_length = BUF_LEN;
+int interval = TX_INTERVAL;
 struct pollfd client[_POSIX_OPEN_MAX]; //gniazda klientow
 
 
@@ -92,6 +95,10 @@ void get_parameters(int argc, char *argv[]) {
         else if (strcmp(argv[j], "-X") == 0)
         {
         	buf_length = atoi(argv[j]);
+        }
+        else if (strcmp(argv[j], "-i") == 0)
+        {
+        	interval = atoi(argv[j]);
         }
     }
 
@@ -147,6 +154,8 @@ static void catch_int (int sig) {
   	if (DEBUG) {
   		printf("Exit() due to Ctrl+C\n");
   	}
+  	//TODO
+  	printf("Poczekaj jeszcze na procesy potomne albo zabij je\n");
   	exit(EXIT_SUCCESS);
 }
 
@@ -261,7 +270,8 @@ void send_a_report() {
 
     	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
     	if(clients[i].ev) {	
-    		printf("klient %d : ",i);
+    		printf("[PID:%d] ",getpid());
+    		printf("[klient:%d] ",i);
     		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
     			 inet_ntoa(clients[i].address.sin_addr), 
     			 ntohs(clients[i].address.sin_port),
@@ -325,7 +335,7 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
   if(!an_event) syserr("Error creating event.");
   cl->ev = an_event;
   if(event_add(an_event, NULL) == -1) syserr("Error adding an event to a base.");
-send_a_report();
+	send_a_report();
 
 }
 
@@ -355,10 +365,7 @@ void init_client_info(int fifo_queue_size) {
 
 int main (int argc, char *argv[]) {
 	
-	struct sockaddr_in server;
-	char buf[BUF_SIZE];
-	ssize_t rval;
-	int msgsock, active_clients, i, ret;
+	
 
     if (DEBUG && argc == 1) {
         printf("Server run with parameters: -p [port_number] -F [fifo_size] -L [fifo_low_watermark] "
@@ -371,30 +378,6 @@ int main (int argc, char *argv[]) {
 	/* Ctrl-C konczy porogram */
   	if (signal(SIGINT, catch_int) == SIG_ERR) {
     	syserr("Unable to change signal handler\n");
-  	}
-
-  	initiate_client();
-  	active_clients = 0;
-  	create_main_socket();
-  	
-	server.sin_family = AF_INET; 
-  	server.sin_addr.s_addr = htonl(INADDR_ANY); 
-  	server.sin_port = htons(port_num);   	
-
- 	/* Bindowanie gniazda do adresu */
-  	if (bind(client[0].fd, (struct sockaddr*)&server,
-           (socklen_t)sizeof(server)) < 0) {
-    	syserr("Binding stream socket");
-  	}
-
-  	if (DEBUG) {
-  		printf("Server.sin_addr.s_addr: %hu\n", server.sin_addr.s_addr);
-  		printf("Accepting on port: %hu\n",ntohs(server.sin_port));
-  	}
-
-  	/* Tryb nasluchiwania */
-  	if (listen(client[0].fd, QUEUE_LENGTH) == -1) {
-    	syserr("Starting to listen");
   	}
 
   	// <LIBEVENT>
@@ -432,40 +415,170 @@ int main (int argc, char *argv[]) {
 
 
 
-	pid_t pid;
+pid_t pid;
 
-  	switch (pid = fork()) {
-    	case -1:
-            syserr("fork()");
-    	case 0: 
-            //jestem w dziecku
-            //ono dalej niech sie zajmuje obsluga TCP
-		    printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
+switch (pid = fork()) {
+	case -1:
+        syserr("fork()");
+	case 0: 
+        //jestem w dziecku
+        //ono dalej niech sie zajmuje obsluga TCP
+		if (DEBUG) {
+	    	printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
+		}
 
-			printf("Entering dispatch loop.\n");
-			if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
-			printf("Dispatch loop finished.\n");
+		printf("Entering dispatch loop.\n");
+		if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
+		printf("Dispatch loop finished.\n");
 
-			event_free(listener_socket_event);
-			event_base_free(base);
+		event_free(listener_socket_event);
+		event_base_free(base);
 
-            exit(0);
-    	default:
-            break;        
+		if (DEBUG) { 
+			printf("[PID: %d] Jestem procesem potomnym, i zaraz sie skoncze\n",getpid());
+        }
+        exit(0);
+	default:
+        break;        
+}
 
-  }
-
-  printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie budowa i obsluga UDP\n",getpid());
-
-
-
-
-
+if (DEBUG) {
+	printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie budowa i obsluga UDP\n",getpid());
+}
 
 
 // </LIBEVENT
 
 
+// na razie dla ipv4 i na poll()
+// UDP
+
+	struct sockaddr_in server;
+	struct sockaddr_in client_udp;
+	char buf[BUF_SIZE];
+	ssize_t rval;
+	int msgsock, active_clients, i, ret;
+	int changes;
+
+	socklen_t rcva_len;
+    ssize_t len_udp;
+
+
+  	initiate_client();
+  	active_clients = 0;
+
+
+  	//create_main_socket();
+  			//lub 
+	//creating IPv4 UDP socket
+	int sock_udp;
+    sock_udp = socket(AF_INET, SOCK_DGRAM, 0); 
+    if (sock_udp < 0)
+        syserr("socket");  	
+
+
+
+
+	server.sin_family = AF_INET; 
+  	server.sin_addr.s_addr = htonl(INADDR_ANY); //we listen on all interfaces
+  	server.sin_port = htons(port_num); //port num podany na wejsciu  	
+
+ 	/* Bindowanie centralnego gniazda do swojego adresu */
+/*  	if (bind(client[0].fd, (struct sockaddr*)&server,
+           (socklen_t)sizeof(server)) < 0) {
+    	syserr("Binding stream socket");
+  	}
+*/	
+  	//lub
+
+  	//bind the socket to my address
+    if (bind(sock_udp, (struct sockaddr *) &server,
+      (socklen_t) sizeof(server)) < 0)
+        syserr("bind");
+
+
+
+
+  	if (DEBUG) {
+  		printf("UDP : Server.sin_addr.s_addr: %hu\n", server.sin_addr.s_addr);
+  		printf("UDP : Accepting on port: %hu\n",ntohs(server.sin_port));
+  	}
+
+  	/* Tryb nasluchiwania */
+/*  	if (listen(client[0].fd, QUEUE_LENGTH) == -1) {
+    	syserr("Starting to listen");
+  	}
+*/
+
+switch (pid = fork()) {
+	case -1:
+        syserr("fork()");
+	case 0: 
+        //jestem w dziecku
+        //ono dalej niech sie zajmuje obsluga TCP
+		if (DEBUG) {
+	    	printf("[PID: %d] Jestem kolejnym procesem potomnym, to ja zajme sie miksowaniem i przesylaniem datagramu wyjsciowego\n",getpid());
+		}
+		//czekam 500 ms 
+		while (1) {
+			struct timespec tim, tim2;
+   			tim.tv_sec = 15; //powinno byc 0
+   			tim.tv_nsec = 500000000L; //0.5 s
+			nanosleep(&tim, &tim2);
+
+			//changes = poll(client, _POSIX_OPEN_MAX, 100*interval);	
+			//nzl od tego, czy sa zmiany na deskryptorach, czy nie
+			printf("Miksuje wszystkie dane\n");
+			printf("Wysylam je w petli do wszytskich kleintow\n");	
+				//miksuj wszytskie dane
+				//wyslij
+		}	
+        exit(0);
+	default:
+        break;        
+}
+
+if (DEBUG) {
+	printf("[PID: %d] Jestem dalej procesem macierzystym, bede odbierac po UDP i zajmowac sie klientami\n",getpid());
+}
+
+
+    rcva_len = (ssize_t) sizeof(server);
+    int flags = 0; 
+    ssize_t len;
+
+	for (;;) {
+		do {
+			flags = 0; // we do not request anything special
+			len = recvfrom(sock_udp, buf, sizeof(buf), flags,
+					(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
+			printf("RECVFROM\n");
+			if (len < 0)
+				syserr("error on datagram from client socket");
+			else {
+				(void) printf("read from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
+						(int) len, buf); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
+						
+			}
+		} while (len > 0); //dlugosc 0 jest ciezko uzyskac
+		(void) printf("finished exchange\n");
+	}
+
+/*
+    
+    while (1) {
+        len_udp = recvfrom(sock_udp, &num_of_octets, sizeof(uint32_t), flags,
+                    (struct sockaddr *) &client_address_udp, &rcva_len);
+        if (len_udp < 0) 
+            syserr("read from udp");
+        //checking IP adress of the sender
+        if (client_address_udp.sin_addr.s_addr == 
+            ((struct sockaddr_in*) (addr_result->ai_addr))->sin_addr.s_addr) {
+            received = 1;            
+        }
+    }
+
+*/
 
 
 
@@ -479,8 +592,8 @@ int main (int argc, char *argv[]) {
 
 
 
-  	/* Do pracy */
-  	do {
+ 	/* Do pracy */
+ /* 	do {
 	  	//za kazdym razem msuimy to zrobic
     	for (i = 0; i < _POSIX_OPEN_MAX; ++i)
       		client[i].revents = 0;
@@ -489,12 +602,14 @@ int main (int argc, char *argv[]) {
 	        		perror("close");  //zamykamy gniazdo, jesli jest FINISH!!!
 	      	client[0].fd = -1;
     	}
-
+*/
 	    /* Czekamy przez 5000 ms */
-	    ret = poll(client, _POSIX_OPEN_MAX, 5000);
+/*	    ret = poll(client, _POSIX_OPEN_MAX, 5000);
 	    if (ret < 0)
 	      perror("poll");
 	    else if (ret > 0) {
+	      
+/*
 	      if (finish == FALSE && (client[0].revents & POLLIN)) {
 	        msgsock =
 	          accept(client[0].fd, (struct sockaddr*)0, (socklen_t*)0);
@@ -517,9 +632,12 @@ int main (int argc, char *argv[]) {
 	              perror("close");
 	          }
 	        }
-	      }
+	      } */
+
+
+
 	      //potem sprawdzamy (jednoczesnie moga zajsc, nie po elsie ;p)
-	      for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
+/*	      for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
 	        if (client[i].fd != -1
 	            && (client[i].revents & (POLLIN | POLLERR))) {
 	          rval = read(client[i].fd, buf, BUF_SIZE);
@@ -553,4 +671,7 @@ int main (int argc, char *argv[]) {
     if (close(client[0].fd) < 0)
       perror("Closing main socket");
   exit(EXIT_SUCCESS);
+}
+*/
+	return 0;
 }

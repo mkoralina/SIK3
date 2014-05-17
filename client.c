@@ -110,7 +110,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
 
 
   int r = read(descriptor, buf, BUF_SIZE);
-  if(r < 0) syserr("read (from stdin)");
+  if(r < 0) syserr("w evencie: read (from stdin)");
   if(r == 0) {
     fprintf(stderr, "stdin closed. Exiting event loop.\n");
     if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
@@ -227,6 +227,7 @@ int main (int argc, char *argv[]) {
     .ai_canonname = NULL,
     .ai_next = NULL
   };
+
   struct addrinfo *addr;
 
   if(getaddrinfo("localhost", "4242", &addr_hints, &addr)) syserr("getaddrinfo");
@@ -244,65 +245,130 @@ int main (int argc, char *argv[]) {
 
   read_CLIENT_datagram(&clientid);  
 
-  struct event *stdin_event =
+/*  struct event *stdin_event =
     event_new(base, 0, EV_READ|EV_PERSIST, stdin_cb, NULL); // 0 - standardwowe wejscie
   if(!stdin_event) syserr("event_new");
   if(event_add(stdin_event,NULL) == -1) syserr("event_add");
   
+*/
+    pid_t pid;
 
-    printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
-    printf("Entering dispatch loop.\n");
-    if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
-    printf("Dispatch loop finished.\n");
-
-    bufferevent_free(bev);
-    event_base_free(base);
-
-
-
-
- 
-
-// END: LIBEVENT
+    switch (pid = fork()) {
+        case -1:
+            syserr("fork()");
+        case 0: 
+            //jestem w dziecku
+            //ono dalej niech sie zajmuje obsluga TCP
+            if (DEBUG) {
+                printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
+            }
 
 
+            printf("Entering dispatch loop.\n");
+            if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
+            printf("Dispatch loop finished.\n");
 
+            bufferevent_free(bev);
+            event_base_free(base);
 
+            if (DEBUG) { 
+                printf("[PID: %d] Jestem procesem potomnym, i zaraz sie skoncze\n",getpid());
+            }
+            exit(0);
+        default:
+            break;        
+    }
 
+    if (DEBUG) {
+        printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie przesylem po UDP\n",getpid());
+    } 
 
+    struct sockaddr_in my_address;
 
+    my_address.sin_family = AF_INET; 
+   // my_address.sin_addr.s_addr = htonl(INADDR_ANY); //to trzeba wziac z argumentow jakos!!!!!
+    my_address.sin_port = htons((uint16_t) port_num);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         syserr("socket");
     }
+
+
+    unsigned char buf_udp[BUF_SIZE+1];
+    socklen_t rcva_len;
+    ssize_t snd_len;
+    int flags = 0;
+
+    rcva_len = (socklen_t) sizeof(my_address);
+    
+    printf("Pribuje wyslac tekst o Asi\n");
+    char msg[] = "A Asia ma psa";
+    snd_len = sendto(sock, msg, sizeof(msg), flags,
+            (struct sockaddr *) &my_address, rcva_len);
+   // int w = write(sock, msg, sizeof(msg));
+    //if (w != sizeof(msg)) syserr("nie przeszlo");  
+   printf("Niby przeszlo, snd_len: %zu\n", snd_len);
+
+
+printf("W buforze przed petla: %s\n",buf_udp);
+
+    int r;
+    //a to sie nie zawiesi tutaj?
+    while ((r = read(0, buf_udp, BUF_SIZE)) > 0) {
+        printf("W buforze: %s\n",buf_udp);
+        printf("sizeof(buf_udp) %zu\n",sizeof(buf_udp) );
+        int sflags = 0;
+        rcva_len = (socklen_t) sizeof(my_address);
+
+        int len = strnlen(buf_udp, BUF_SIZE);
+        snd_len = sendto(sock, buf_udp, len, sflags,
+            (struct sockaddr *) &my_address, rcva_len);
+
+        printf("snd_len: %zu\n", snd_len);
+        printf("len: %d\n", len);
+
+        //potem poprawic na wysylanie w petli , a tak naprawde tylko partiami wielkosci WIN
+        if (snd_len != (ssize_t) len) {
+            syserr("partial / failed sendto"); 
+        }           
+    }
+    
+    if(r < 0) 
+        syserr("macirzysty : read (from stdin)");
+    if(r == 0) {
+        if (DEBUG) {
+            printf("Skonczyly sie dane z stdin\n");
+        }
+    }
+
+
+    /* z gory przeniesione dla ulatwienia
+
+    struct addrinfo addr_hints = {
+    .ai_flags = 0,
+    .ai_family = AF_INET,
+    .ai_socktype = SOCK_STREAM,
+    .ai_protocol = 0,
+    .ai_addrlen = 0,
+    .ai_addr = NULL,
+    .ai_canonname = NULL,
+    .ai_next = NULL
+  };
+  struct addrinfo *addr;
+
+  if(getaddrinfo("localhost", "4242", &addr_hints, &addr)) syserr("getaddrinfo");
+
+/* Pierwszym parametrem jest zdarzenie związane z buforem, następne dwa są takie 
+   jak w systemowym connect(). Jeśli przy tworzeniu zdarzenia nie podaliśmy gniazda,
+   to ta funkcja stworzy je dla nas. <- DYNAMICZNE TWORZENIE GNIAZD!
+  if(bufferevent_socket_connect(bev, addr->ai_addr, addr->ai_addrlen) == -1)
+    syserr("bufferevent_socket_connect");
+  freeaddrinfo(addr);*/
+
+
+
+
 
   /* Trzeba się dowiedzieć o adres internetowy serwera. */
 /*  memset(&addr_hints_poll, 0, sizeof(struct addrinfo));
