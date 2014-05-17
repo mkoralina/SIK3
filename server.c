@@ -360,6 +360,49 @@ void init_client_info(int fifo_queue_size) {
 }
 
 
+int create_udp_socket() {
+	struct sockaddr_in server;
+
+	int sock_udp = socket(AF_INET, SOCK_DGRAM, 0); 
+    if (sock_udp < 0)
+        syserr("socket"); 
+
+	server.sin_family = AF_INET; 
+  	server.sin_addr.s_addr = htonl(INADDR_ANY); //we listen on all interfaces
+  	server.sin_port = htons(port_num); //port num podany na wejsciu 
+	
+    if (bind(sock_udp, (struct sockaddr *) &server,
+      (socklen_t) sizeof(server)) < 0)
+        syserr("bind");
+
+    return sock_udp; 	
+}
+
+void read_from_udp(int sock_udp) {
+	char buf[BUF_SIZE+1];	
+    int flags = 0; 
+    ssize_t len;
+	struct sockaddr_in client_udp;
+	socklen_t rcva_len = (ssize_t) sizeof(client_udp);
+
+	for (;;) {
+		do {
+			flags = 0; // we do not request anything special
+			len = recvfrom(sock_udp, buf, sizeof(buf), flags,
+					(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
+			printf("RECVFROM\n");
+			if (len < 0)
+				syserr("error on datagram from client socket");
+			else {
+				(void) printf("read from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
+						(int) len, buf); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
+						
+			}
+		} while (len > 0); //dlugosc 0 jest ciezko uzyskac
+		(void) printf("finished exchange\n");
+	}
+
+}
 
 
 
@@ -454,13 +497,12 @@ if (DEBUG) {
 // UDP
 
 	struct sockaddr_in server;
-	struct sockaddr_in client_udp;
 	char buf[BUF_SIZE];
 	ssize_t rval;
 	int msgsock, active_clients, i, ret;
 	int changes;
 
-	socklen_t rcva_len;
+	
     ssize_t len_udp;
 
 
@@ -471,17 +513,8 @@ if (DEBUG) {
   	//create_main_socket();
   			//lub 
 	//creating IPv4 UDP socket
-	int sock_udp;
-    sock_udp = socket(AF_INET, SOCK_DGRAM, 0); 
-    if (sock_udp < 0)
-        syserr("socket");  	
-
-
-
-
-	server.sin_family = AF_INET; 
-  	server.sin_addr.s_addr = htonl(INADDR_ANY); //we listen on all interfaces
-  	server.sin_port = htons(port_num); //port num podany na wejsciu  	
+	int sock_udp = create_udp_socket();
+    
 
  	/* Bindowanie centralnego gniazda do swojego adresu */
 /*  	if (bind(client[0].fd, (struct sockaddr*)&server,
@@ -489,14 +522,6 @@ if (DEBUG) {
     	syserr("Binding stream socket");
   	}
 */	
-  	//lub
-
-  	//bind the socket to my address
-    if (bind(sock_udp, (struct sockaddr *) &server,
-      (socklen_t) sizeof(server)) < 0)
-        syserr("bind");
-
-
 
 
   	if (DEBUG) {
@@ -538,140 +563,10 @@ switch (pid = fork()) {
         break;        
 }
 
-if (DEBUG) {
-	printf("[PID: %d] Jestem dalej procesem macierzystym, bede odbierac po UDP i zajmowac sie klientami\n",getpid());
-}
-
-
-    rcva_len = (ssize_t) sizeof(server);
-    int flags = 0; 
-    ssize_t len;
-
-	for (;;) {
-		do {
-			flags = 0; // we do not request anything special
-			len = recvfrom(sock_udp, buf, sizeof(buf), flags,
-					(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
-			printf("RECVFROM\n");
-			if (len < 0)
-				syserr("error on datagram from client socket");
-			else {
-				(void) printf("read from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
-						(int) len, buf); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
-						
-			}
-		} while (len > 0); //dlugosc 0 jest ciezko uzyskac
-		(void) printf("finished exchange\n");
+	if (DEBUG) {
+		printf("[PID: %d] Jestem dalej procesem macierzystym, bede odbierac po UDP i zajmowac sie klientami\n",getpid());
 	}
 
-/*
-    
-    while (1) {
-        len_udp = recvfrom(sock_udp, &num_of_octets, sizeof(uint32_t), flags,
-                    (struct sockaddr *) &client_address_udp, &rcva_len);
-        if (len_udp < 0) 
-            syserr("read from udp");
-        //checking IP adress of the sender
-        if (client_address_udp.sin_addr.s_addr == 
-            ((struct sockaddr_in*) (addr_result->ai_addr))->sin_addr.s_addr) {
-            received = 1;            
-        }
-    }
-
-*/
-
-
-
-
-
-
-
-
-
-
-
-
-
- 	/* Do pracy */
- /* 	do {
-	  	//za kazdym razem msuimy to zrobic
-    	for (i = 0; i < _POSIX_OPEN_MAX; ++i)
-      		client[i].revents = 0;
-	    	if (finish == TRUE && client[0].fd >= 0) {
-	      		if (close(client[0].fd) < 0)
-	        		perror("close");  //zamykamy gniazdo, jesli jest FINISH!!!
-	      	client[0].fd = -1;
-    	}
-*/
-	    /* Czekamy przez 5000 ms */
-/*	    ret = poll(client, _POSIX_OPEN_MAX, 5000);
-	    if (ret < 0)
-	      perror("poll");
-	    else if (ret > 0) {
-	      
-/*
-	      if (finish == FALSE && (client[0].revents & POLLIN)) {
-	        msgsock =
-	          accept(client[0].fd, (struct sockaddr*)0, (socklen_t*)0);
-	        if (msgsock == -1)
-	          perror("accept");
-	        else {
-				//przechodzimy cala tablice, szukamy wolnego gniazda. w[osujemy aktywne gniazdo tam, i zwikeszamy liczbe klientow
-	          for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
-	            if (client[i].fd == -1) {
-	              client[i].fd = msgsock;
-	              active_clients += 1;
-	              break;
-	            }
-	          }
-	          //jak juz jest przepellnione, to zamykamy gniazdo
-	          //zakmniecie poaczenia praktycznie
-	          if (i >= _POSIX_OPEN_MAX) {
-	            fprintf(stderr, "Too many clients\n");
-	            if (close(msgsock) < 0)
-	              perror("close");
-	          }
-	        }
-	      } */
-
-
-
-	      //potem sprawdzamy (jednoczesnie moga zajsc, nie po elsie ;p)
-/*	      for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
-	        if (client[i].fd != -1
-	            && (client[i].revents & (POLLIN | POLLERR))) {
-	          rval = read(client[i].fd, buf, BUF_SIZE);
-	          if (rval < 0) {
-	            perror("Reading stream message");
-				// i zamykamy gniazdo
-	            if (close(client[i].fd) < 0)
-	              perror("close");
-	            client[i].fd = -1;
-	            active_clients -= 1;
-	          }
-	          else if (rval == 0) {
-	            //kleint sie rozlaczyl
-				fprintf(stderr, "Ending connection\n");
-				//tez mu zamykamy despkryptory itp.
-	            if (close(client[i].fd) < 0)
-	              perror("close");
-	            client[i].fd = -1;
-	            active_clients -= 1;
-	          }
-	          else
-	            printf("-->%.*s\n", (int)rval, buf);
-	        }
-	      }
-	    }
-	    else
-	      fprintf(stderr, "Do something else\n");
-  	} while (finish == FALSE || active_clients > 0);
-
-  if (client[0].fd >= 0)
-    if (close(client[0].fd) < 0)
-      perror("Closing main socket");
-  exit(EXIT_SUCCESS);
-}
-*/
+	read_from_udp(sock_udp);
 	return 0;
 }
