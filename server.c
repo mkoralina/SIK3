@@ -439,8 +439,9 @@ int get_clientid(struct in_addr sin_addr, unsigned short sin_port) {
 void match_and_execute(char *datagram, int clientid) {
     if (DEBUG) printf("[TID:%d] match_and_execute: %s\n",syscall(SYS_gettid),datagram);
     int nr;    
-    char *data;
-    if (sscanf(datagram, "UPLOAD %d\n%s", &nr, data) == 1) {
+    //char *data;
+    char data[BUF_SIZE];
+    if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 2) {
         printf("Zmatchowano do UPLOAD, nr = %d, dane = %s\n", nr, data);
         //obsluz UPLOAD
         //wpisuejsz [dane] do kolejki zwiazanej z klientem
@@ -448,7 +449,7 @@ void match_and_execute(char *datagram, int clientid) {
         //int ack = client_info[clientid].ack
         //send_ACK_datagram()
     }
-    else if (sscanf(datagram, "RETRANSMIT %d\n", &nr) == 1) {
+    else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
         printf("Zmachowano do RETRANSMIT\n");
     }
     else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
