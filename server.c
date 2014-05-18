@@ -270,34 +270,36 @@ void send_datagram(char *datagram, int clientid) {
 void send_a_report() {
 	//wersja beta:
 	//create and print a report
-	printf("\n");
-	int i;
-  	for(i = 0; i < MAX_CLIENTS; i++)
-    	//jesli klient jest w systemie i jego kolejka aktywna
+    for (;;) {
+    	printf("\n");
+    	int i;
+      	for(i = 0; i < MAX_CLIENTS; i++)
+        	//jesli klient jest w systemie i jego kolejka aktywna
+        	
+        	//TU TRZEBA ODKOMENTOWac!
+        	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
+        	if(clients[i].ev) {	
+        		printf("[PID:%d] ",getpid());
+        		printf("[klient:%d] ",i);
+        		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
+        			 inet_ntoa(clients[i].address.sin_addr), 
+        			 ntohs(clients[i].address.sin_port),
+        			 strlen(client_info[i].buf_FIFO),
+        			 fifo_queue_size,
+        			 client_info[i].min_FIFO,
+        			 client_info[i].max_FIFO
+        			 );
+        	}
     	
-    	//TU TRZEBA ODKOMENTOWac!
-    	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
-    	if(clients[i].ev) {	
-    		printf("[PID:%d] ",getpid());
-    		printf("[klient:%d] ",i);
-    		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
-    			 inet_ntoa(clients[i].address.sin_addr), 
-    			 ntohs(clients[i].address.sin_port),
-    			 strlen(client_info[i].buf_FIFO),
-    			 fifo_queue_size,
-    			 client_info[i].min_FIFO,
-    			 client_info[i].max_FIFO
-    			 );
-    	}
-	
-    //normalnie powinno być:
-    //create a report	
-	//multisend a report
-    //sleep(1);    
-    struct timespec tim, tim2;
-    tim.tv_sec = 1; //1s
-    tim.tv_nsec = 0; //0
-    nanosleep(&tim, &tim2);    
+        //normalnie powinno być:
+        //create a report	
+    	//multisend a report
+        //sleep(1);    
+        struct timespec tim, tim2;
+        tim.tv_sec = 10; //1s
+        tim.tv_nsec = 0; //0
+        nanosleep(&tim, &tim2); 
+    }       
 }
 
 
@@ -336,8 +338,6 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
     cl->ev = an_event;
     if(event_add(an_event, NULL) == -1) syserr("Error adding an event to a base.");
 	
-    send_a_report();
-
 }
 
 
@@ -620,8 +620,9 @@ int main (int argc, char *argv[]) {
     create_event_thread();
     sock_udp = create_udp_socket();	
 
-    create_report_thread();
+    
     create_reading_thread();
+    create_report_thread();
 
     for (;;) {
         mix_data();
