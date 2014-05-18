@@ -176,6 +176,7 @@ struct info {
 
 	int port_TCP;
 	int port_UDP;
+    struct in_addr addr_UDP;
 	int min_FIFO;
 	int max_FIFO;
 	char **buf_FIFO;
@@ -312,6 +313,8 @@ void send_ACK_datagram(int ack, int win, int clientid) {
 }
 
 
+
+
 //nieprzestestowane
 void send_datagram(char *datagram, int clientid) {
     struct sockaddr_in client_address;
@@ -328,8 +331,6 @@ void send_datagram(char *datagram, int clientid) {
             syserr("partial / failed sendto");
     }        
 }
-
-
 
 
 
@@ -415,8 +416,6 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 }
 
 
-// </LIBEVENT
-
 
 
 
@@ -457,26 +456,107 @@ int create_udp_socket() {
     return sock_udp; 	
 }
 
+//nieprzetestowane
+int get_clientid(struct in_addr sin_addr, unsigned short sin_port) {
+    int id = -1;
+    int i;
+    int found = 0;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+        /*if (!found && client_info[i].addr_UDP == sin_addr && client_info[i].port_UDP == sin_port) { 
+        // TUTAJ SIE NIE KOMPILUJE - INACZEJ TRZEBA POROWNAC TE ADRESY:
+            client_info[i].addr_UDP == sin_addr
+           pomysl: zapisac do info adres jednak i wtedy
+           http://stackoverflow.com/questions/22183561/how-to-compare-two-ip-address-in-c
+        */ 
+        //atrapa, zeby sie skompilowalo:
+        if (!found && client_info[i].port_UDP == sin_port) {   // <- TEMPORARY!!!!!
+            found = 1;
+            id = i;
+        }        
+    }
+    return id;
+}
+
+void match_and_execute(char *datagram, int clientid) {
+    //proba zmatchowania:
+    //jesli zmachowano do upload
+        //obsluz UPLOAD
+    //jesli zmachowano do RETRANSMIT
+        //obluz RETRANSMIT
+    //jesli zmachowano do KEEPALIVE
+        //obluz KEEPALIVE
+    //wpp
+        //syserr("match and execute: inappropriate datagram type")
+
+    //do tego pamietaj o updateowaniu wszystkich wskaxnikow (ack, nr, win itp.)
+    //wpisuejsz [dane] do kolejek (czy cale datagramy????)
+}
+
+void add_new_client(char * datagram, struct in_addr sin_addr, unsigned short sin_port) {
+    //sporbuj zmatchowac do CLIENT
+        //jesli sie uda
+            //szukasz nowego miejsca w tabeli kleintow
+                //jest miejsce
+                    //dodajesz
+                    //zapisujesz dane
+
+                //nie ma
+                    //komunikat -> za duzo kleintow w systemie
+        // jesli nie
+            //bledny datagram
+}
+
+void process_datagram(char * datagram, struct in_addr sin_addr, unsigned short sin_port) {
+    int clientid = get_clientid(sin_addr, sin_port);
+    if (clientid < 0) {
+        //klienta nie ma w tabeli, jesli datagram jest typu CLIENT, trzeba go dodac 
+        add_new_client(datagram, sin_addr, sin_port);
+    }
+    else {
+        match_and_execute(datagram, clientid);
+    }    
+}
+
 void read_from_udp(int sock_udp) {
-	char buf[BUF_SIZE+1];	
+	char datagram[BUF_SIZE+1];	
     int flags = 0; 
     ssize_t len;
 	struct sockaddr_in client_udp;
 	socklen_t rcva_len = (ssize_t) sizeof(client_udp);
 
-	printf("READ FROM UDP\n");
+
 	for (;;) {
 		do {
 			flags = 0; // we do not request anything special
-			len = recvfrom(sock_udp, buf, sizeof(buf), flags,
+			len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
 					(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
 			
 			if (len < 0)
-				syserr("error on datagram from client socket");
+				  syserr("error on datagram from client socket");
 			else {
-				(void) printf("read from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
-						(int) len, buf); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
-						
+				(void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
+						(int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
+				pid_t pid2;
+
+                switch (pid2 = fork()) {
+                    case -1:
+                        syserr("fork()");
+                    case 0: 
+                        //jestem w dziecku
+                        //przejmuje obsluge datagramu
+                        if (DEBUG) {
+                            printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie obsluga datagramu\n",getpid());
+                        }
+
+                        process_datagram(datagram, client_udp.sin_addr, client_udp.sin_port);    
+
+                        if (DEBUG) { 
+                            printf("[PID: %d] Jestem procesem potomnym, i zaraz sie skoncze\n",getpid());
+                        }
+                        exit(0);
+                    default:
+                        break;        
+                }
 			}
 		} while (len > 0); //dlugosc 0 jest ciezko uzyskac
 		(void) printf("finished exchange\n");
