@@ -159,10 +159,10 @@ void a_read_cb(struct bufferevent *bev, void *arg)
 
 
     if (DEBUG) {
-        send_CLIENT_datagram(15); //<- dziala, trzeba wydobyć client id tylko 
+        //send_CLIENT_datagram(15); //<- dziala, trzeba wydobyć client id tylko 
         char bzdury[] = "nikt tego nie zda"; 
-        send_UPLOAD_datagram(bzdury, nr);
-        send_RETRANSMIT_datagram(nr);
+        //send_UPLOAD_datagram(bzdury, nr);
+        //send_RETRANSMIT_datagram(nr);
         send_KEEEPALIVE_datagram();
     }    
   }

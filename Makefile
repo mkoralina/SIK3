@@ -1,13 +1,16 @@
+# Monika Konopka, 334666,
+# Data: 13.05.2014r. 
+
 CC = gcc
-CFLAGS = -Wall
+CFLAGS = -Wall -pthread
 TARGETS = client server 
 
 all: $(TARGETS) 
 
-client: client.o err.o err.h 
-	$(CC) $(CFLAGS) $^ -o $@ -levent -lm
+client: client.o err.o err.h header.h
+	$(CC) $(CFLAGS) $^ -o $@ -levent -lm 
 
-server: server.o err.o err.h mixer.h
+server: server.o err.o err.h mixer.h header.h
 	$(CC) $(CFLAGS) $^ -o $@ -levent -lm
 
 clean:
