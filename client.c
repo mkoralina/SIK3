@@ -186,7 +186,7 @@ void an_event_cb(struct bufferevent *bev, short what, void *arg)
   if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
 }
 
-
+//TEGO NIE UZYWAM
 void read_CLIENT_datagram(uint32_t *clientid) {
     printf("read_CLIENT_datagram\n");
     char buf[BUF_SIZE+1];
@@ -310,7 +310,7 @@ int main (int argc, char *argv[]) {
 
     if(getaddrinfo("localhost", "4242", &addr_hints, &addr)) syserr("getaddrinfo");
 
-/* Pierwszym parametrem jest zdarzenie związane z buforem, następne dwa są takie 
+    /* Pierwszym parametrem jest zdarzenie związane z buforem, następne dwa są takie 
    jak w systemowym connect(). Jeśli przy tworzeniu zdarzenia nie podaliśmy gniazda,
    to ta funkcja stworzy je dla nas. <- DYNAMICZNE TWORZENIE GNIAZD!*/
     if(bufferevent_socket_connect(bev, addr->ai_addr, addr->ai_addrlen) == -1)

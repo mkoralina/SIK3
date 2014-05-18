@@ -30,9 +30,11 @@ int fifo_low = FIFO_LOW_WATERMARK;
 int fifo_high;
 int buf_length = BUF_LEN;
 int interval = TX_INTERVAL;
-struct pollfd client[_POSIX_OPEN_MAX]; //gniazda klientow
 int nr; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
 int sock_udp;
+evutil_socket_t listener_socket;
+struct event_base *base;
+struct event *listener_socket_event;
 
 
 void get_parameters(int argc, char *argv[]) {
@@ -80,41 +82,10 @@ void get_parameters(int argc, char *argv[]) {
     }	
 }
 
-/* Zamyka deskryptory i gniazdo glowne klientow */
-void close_descriptors() {
-	int j;
-	for (j = 1; j < _POSIX_OPEN_MAX; ++j) {
-		if (client[j].fd >= 0)
-			if (close(client[j].fd) < 0)
-	            syserr("Closing client's descriptor");
-	} 
-	if (client[0].fd >= 0)
-    	if (close(client[0].fd) < 0)
-      		syserr("Closing main socket");
-}
-
-/* Inicjuje tablice z gniazdami klientew, client[0] to gniazdko centrali */
-void initiate_client() {
-	static int i;
-  	for (i = 0; i < _POSIX_OPEN_MAX; ++i) {
-    	client[i].fd = -1; //puste 
-    	client[i].events = POLLIN; //
-    	client[i].revents = 0; //zeruje przed wywolaniem
-  	}
-}
-
-/* Tworzy gniazdo centrali */
-void create_main_socket() {
-  	client[0].fd = socket(AF_INET, SOCK_STREAM, 0); 
-  	if (client[0].fd < 0) {
-    	syserr("Opening stream socket");
-  	}
-}
-
 /* Obsługa sygnału kończenia */
 static void catch_int (int sig) {
 	/* zwalniam zasoby */
-	close_descriptors();
+    //ogarnic te watki i zwalnianie pamieci po mallocu
 	finish = TRUE;
   	if (DEBUG) {
   		printf("Exit() due to Ctrl+C\n");
@@ -127,10 +98,10 @@ static void catch_int (int sig) {
 // LIBEVENT
 
 struct connection_description {
-  int id;	
-  struct sockaddr_in address;
-  evutil_socket_t sock;
-  struct event *ev;
+    int id;	
+    struct sockaddr_in address;
+    evutil_socket_t sock;
+    struct event *ev;
 };
 
 // indeks w tabeli jest numerem id klienta
@@ -158,49 +129,47 @@ struct connection_description clients[MAX_CLIENTS];
 
 void init_clients(void)
 {
-  memset(clients, 0, sizeof(clients));
-  int i;
-  for(i = 0; i < MAX_CLIENTS; i++) {
-  	clients[i].id = i;
-  }
+    memset(clients, 0, sizeof(clients));
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+  	    clients[i].id = i;
+    }
 }
 
 struct connection_description *get_client_slot(void)
 {
-  int i;
-  //szukamy pustego slotu dla nowego klienta
-  for(i = 0; i < MAX_CLIENTS; i++)
-    if(!clients[i].ev)
-      return &clients[i];
-  return NULL;
+    int i;
+    //szukamy pustego slotu dla nowego klienta
+    for(i = 0; i < MAX_CLIENTS; i++)
+        if(!clients[i].ev)
+            return &clients[i];
+    return NULL;
 }
 
 void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
 {
-  struct connection_description *cl = (struct connection_description *)arg;
-  char buf[BUF_SIZE+1];
+    struct connection_description *cl = (struct connection_description *)arg;
+    char buf[BUF_SIZE+1];
 
-  int r = read(sock, buf, BUF_SIZE);
-  if(r <= 0) {
-    if(r < 0) {
-      fprintf(stderr, "Error (%s) while reading data from %s:%d. Closing connection.\n",
-	      strerror(errno), inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port));//inet_ntoa prostsza, starsza wersja ntop, ntop jest ogólna, podaje sie rodzine adresow
-    } else {
-      fprintf(stderr, "Connection from %s:%d closed.\n",
-	      inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port));
+    int r = read(sock, buf, BUF_SIZE);
+    if(r <= 0) {
+        if(r < 0) {
+            fprintf(stderr, "Error (%s) while reading data from %s:%d. Closing connection.\n",
+    	       strerror(errno), inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port));//inet_ntoa prostsza, starsza wersja ntop, ntop jest ogólna, podaje sie rodzine adresow
+        } else {
+            fprintf(stderr, "Connection from %s:%d closed.\n",
+    	       inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port));
+        }
+        if(event_del(cl->ev) == -1) syserr("Can't delete the event.");
+    	//zwalniamy meijsce w tablicy
+        event_free(cl->ev);
+        if(close(sock) == -1) syserr("Error closing socket.");
+        cl->ev = NULL;
+        return;
     }
-    if(event_del(cl->ev) == -1) syserr("Can't delete the event.");
-	//zwalniamy meijsce w tablicy
-    event_free(cl->ev);
-    if(close(sock) == -1) syserr("Error closing socket.");
-    cl->ev = NULL;
-    return;
-  }
-  buf[r] = 0;
-  //wypisujemy adres i port klienta ladnie
-  printf("[%s:%d] %s\n", inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port), buf);
-
-
+    buf[r] = 0;
+    //wypisujemy adres i port klienta ladnie
+    printf("[%s:%d] %s\n", inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port), buf);
 }
 
 
@@ -281,9 +250,6 @@ void send_ACK_datagram(int ack, int win, int clientid) {
     send_datagram(datagram, clientid);
 }
 
-
-
-
 //nieprzestestowane
 void send_datagram(char *datagram, int clientid) {
     struct sockaddr_in client_address;
@@ -301,20 +267,15 @@ void send_datagram(char *datagram, int clientid) {
     }        
 }
 
-
-
-
 void send_a_report() {
 	//wersja beta:
 	//create and print a report
 	printf("\n");
 	int i;
   	for(i = 0; i < MAX_CLIENTS; i++)
-  		
-  		//jesli klient jest w systemie i jego kolejka aktywna
+    	//jesli klient jest w systemie i jego kolejka aktywna
     	
     	//TU TRZEBA ODKOMENTOWac!
-
     	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
     	if(clients[i].ev) {	
     		printf("[PID:%d] ",getpid());
@@ -322,55 +283,60 @@ void send_a_report() {
     		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
     			 inet_ntoa(clients[i].address.sin_addr), 
     			 ntohs(clients[i].address.sin_port),
-    			 sizeof(client_info[i].buf_FIFO),
+    			 strlen(client_info[i].buf_FIFO),
     			 fifo_queue_size,
     			 client_info[i].min_FIFO,
     			 client_info[i].max_FIFO
     			 );
     	}
-      			
+	
     //normalnie powinno być:
     //create a report	
 	//multisend a report
-	
+    //sleep(1);    
+    struct timespec tim, tim2;
+    tim.tv_sec = 1; //1s
+    tim.tv_nsec = 0; //0
+    nanosleep(&tim, &tim2);    
 }
 
 
 //obsluguje polaczenie nowego klienta
 void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 {
-  struct event_base *base = (struct event_base *)arg;
+    struct event_base *base = (struct event_base *)arg;
 
-  struct sockaddr_in sin;
-  socklen_t addr_size = sizeof(struct sockaddr_in);
-  evutil_socket_t connection_socket = accept(sock, (struct sockaddr *)&sin, &addr_size);
+    struct sockaddr_in sin;
+    socklen_t addr_size = sizeof(struct sockaddr_in);
+    evutil_socket_t connection_socket = accept(sock, (struct sockaddr *)&sin, &addr_size);
 
-  if(connection_socket == -1) syserr("Error accepting connection.");
+    if(connection_socket == -1) syserr("Error accepting connection.");
   
-  //chcemy zapisac tego kleinta	
-  struct connection_description *cl = get_client_slot();
-  if(!cl) {
-    close(connection_socket);
-    fprintf(stderr, "Ignoring connection attempt from %s:%d due to lack of space.\n",
-	    inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
-    return;
-  }
+    //chcemy zapisac tego kleinta	
+    struct connection_description *cl = get_client_slot();
+    if(!cl) {
+        close(connection_socket);
+        fprintf(stderr, "Ignoring connection attempt from %s:%d due to lack of space.\n",
+	       inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+        return;
+    }
   
-  //kopiujemy adres kleinta do struktury
-  memcpy(&(cl->address), &sin, sizeof(struct sockaddr_in));
-  cl->sock = connection_socket;
-  //dodaj info o kliencie 
-  client_info[cl->id].port_TCP = ntohs(sin.sin_port);
+    //kopiujemy adres kleinta do struktury
+    memcpy(&(cl->address), &sin, sizeof(struct sockaddr_in));
+    cl->sock = connection_socket;
+    //dodaj info o kliencie 
+    client_info[cl->id].port_TCP = ntohs(sin.sin_port);
 
-  send_CLIENT_datagram(connection_socket,cl->id);
+    send_CLIENT_datagram(connection_socket,cl->id);
 
-  //dla kazdego kleinta z osobna wywoujemy funkcje, rejestrujemy zdarzenie
-  struct event *an_event =
-    event_new(base, connection_socket, EV_READ|EV_PERSIST, client_socket_cb, (void *)cl);
-  if(!an_event) syserr("Error creating event.");
-  cl->ev = an_event;
-  if(event_add(an_event, NULL) == -1) syserr("Error adding an event to a base.");
-	send_a_report();
+    //dla kazdego kleinta z osobna wywoujemy funkcje, rejestrujemy zdarzenie
+    struct event *an_event =
+        event_new(base, connection_socket, EV_READ|EV_PERSIST, client_socket_cb, (void *)cl);
+    if(!an_event) syserr("Error creating event.");
+    cl->ev = an_event;
+    if(event_add(an_event, NULL) == -1) syserr("Error adding an event to a base.");
+	
+    send_a_report();
 
 }
 
@@ -381,6 +347,7 @@ void init_client_info(int fifo_queue_size) {
   	int i;
   	for(i = 0; i < MAX_CLIENTS; i++) {
   		client_info[i].buf_FIFO = malloc(fifo_queue_size * sizeof(char*));
+        memset(client_info[i].buf_FIFO, 0, fifo_queue_size * sizeof(char*)); 
   		client_info[i].min_FIFO = 0;
   		client_info[i].max_FIFO = 0;
   		if (fifo_high > 0)
@@ -426,7 +393,7 @@ int get_clientid(struct in_addr sin_addr, unsigned short sin_port) {
            http://stackoverflow.com/questions/22183561/how-to-compare-two-ip-address-in-c
         */ 
         //atrapa, zeby sie skompilowalo:
-           printf("[%d] %d =? %d\n",i,client_info[i].port_UDP, sin_port);
+        printf("[%d] %d =? %d\n",i,client_info[i].port_UDP, sin_port);
         if (!found && client_info[i].port_UDP == sin_port) {   // <- TEMPORARY!!!!!
             printf("znaleziono\n");
             found = 1;
@@ -482,9 +449,9 @@ void process_datagram(void *param) {
     struct in_addr sin_addr = da.sin_addr;
     unsigned short sin_port = da.sin_port;
     
-    match_and_execute(datagram, 2); //na sztywno do testow
+   // match_and_execute(datagram, 2); //na sztywno do testow
 
-/*
+/* NA RAZIE, ZEBY LATWO BYLO DEBUGOWAC, BO TU SIE WYWALA
     if (DEBUG) printf("[TID:%d] process_datagram\n",syscall(SYS_gettid));
     int clientid = get_clientid(sin_addr, sin_port);
     if (clientid < 0) {
@@ -493,35 +460,24 @@ void process_datagram(void *param) {
     }
     else {
         match_and_execute(datagram, clientid);
-    } */   
+    }   */
 }
 
-void create_UDP_thread(datagram_address* arg) {
-    /*przygotowaniu watku*/
-    pthread_t r; /*wynik*/
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);-
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
-    
-    /*stworzenie watku*/
-    pthread_create(&r,&attr,process_datagram,(void*)arg);
-}
-
-
-
-void read_from_udp(int sock_udp) {
+void read_from_udp() {
     ssize_t len;
     for (;;) {
         do {
-            char datagram[BUF_SIZE+1];
+            //char datagram[BUF_SIZE+1];
             int size = BUF_SIZE +1;
-            //char *datagram;
-            //datagram = (char *) malloc(sizeof(char) * size);
+            char *datagram;
+
+            datagram = (char *) malloc(sizeof(char) * size);
             //datagram = malloc(sizeof *datagram * (BUF_SIZE+1));
-            //if (!datagram) {
-            //    syserr("malloc");
-            //}
-            memset(datagram, 0, sizeof(datagram)); 
+            if (!datagram) {
+                syserr("malloc");
+            }
+            memset(datagram, 0, size); 
+            //memset(datagram, 0, sizeof(datagram)); 
 
             //struct datagram_address *da = malloc(sizeof(struct datagram_address));
             // do tego jeszcze trzeba zaalokować dla da.datagram na pewno (moze i reszte)
@@ -545,50 +501,74 @@ void read_from_udp(int sock_udp) {
                 da.sin_addr = client_udp.sin_addr;
                 da.sin_port = ntohs(client_udp.sin_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
                 create_UDP_thread(&da);
+                free(datagram);
             }
         } while (len > 0); //dlugosc 0 jest ciezko uzyskac
         (void) printf("finished exchange\n");
     }
-
-
-/*
-
-
-
-	char datagram[BUF_SIZE+1];
-    memset(datagram, 0, sizeof(datagram));	
-    int flags = 0; 
-    ssize_t len;
-	struct sockaddr_in client_udp;
-	socklen_t rcva_len = (ssize_t) sizeof(client_udp);
-
-	len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
-			(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
-	
-	if (len < 0)
-		  syserr("error on datagram from client socket");
-	else {
-		(void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
-				(int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
-		printf("DATAGRAM: %s\n", datagram);
-        datagram_address da;
-        da.datagram = (char *)malloc(BUF_SIZE);
-        strcpy(da.datagram, datagram);
-        // TU TEN SAM PROBLEM Z NADPISYWANIEM - DLACZEGO?
-        da.sin_addr = client_udp.sin_addr;
-        da.sin_port = ntohs(client_udp.sin_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
-        create_UDP_thread(&da);
-        
-	}*/
 }
 
 
+void create_UDP_thread(datagram_address* arg) {
+    /*przygotowaniu watku*/
+    pthread_t r; /*wynik*/
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);-
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
+    
+    /*stworzenie watku*/
+    pthread_create(&r,&attr,process_datagram,(void*)arg);
+}
 
+//ZBIC WSZYTSKIE CREATE THREAD za pomoca pointerow do funkcji (1.arg - funkcja, 2. arg - arg dla funkcji, jesli jest, NULL wpp)
+void create_reading_thread() {
+    /*przygotowaniu watku*/
+    pthread_t r; /*wynik*/
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
+    
+    /*stworzenie watku*/
+    pthread_create(&r,&attr,read_from_udp,NULL);    
+}
 
+void event_loop() {
+
+    printf("Entering dispatch loop.\n");
+    if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
+    printf("Dispatch loop finished.\n");
+
+    event_free(listener_socket_event);
+    event_base_free(base);    
+}
+
+void create_event_thread() {
+    pthread_t r; /*wynik*/
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);-
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
+
+    pthread_create(&r,&attr,event_loop,NULL);    
+}
+
+void create_report_thread() {
+    pthread_t r; /*wynik*/
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);-
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
+
+    pthread_create(&r,&attr,send_a_report,NULL);     
+}
+
+void mix_data() {
+    //miskowanie danych
+}
+
+void send_data() {
+    //przesylanie do wszytskich klientow
+}
 
 int main (int argc, char *argv[]) {
-	
-	
 
     if (DEBUG && argc == 1) {
         printf("Server run with parameters: -p [port_number] -F [fifo_size] -L [fifo_low_watermark] "
@@ -604,14 +584,14 @@ int main (int argc, char *argv[]) {
   	}
 
   	// <LIBEVENT>
-	struct event_base *base;
+	
 
   	init_clients();
 
   	base = event_base_new();
   	if(!base) syserr("Error creating base.");
 
-  	evutil_socket_t listener_socket;
+  	
   	listener_socket = socket(AF_INET, SOCK_STREAM, 0);
   	if(listener_socket == -1 ||
      	evutil_make_listen_socket_reuseable(listener_socket) ||
@@ -630,98 +610,23 @@ int main (int argc, char *argv[]) {
 
   	if(listen(listener_socket, 5) == -1) syserr("listen");
 
-  	struct event *listener_socket_event = 
+  	listener_socket_event = 
     	event_new(base, listener_socket, EV_READ|EV_PERSIST, listener_socket_cb, (void *)base);
   	if(!listener_socket_event) syserr("Error creating event for a listener socket.");
 
   	if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
 
 
+    create_event_thread();
+    sock_udp = create_udp_socket();	
 
-	pid_t pid;
+    create_report_thread();
+    create_reading_thread();
 
-	switch (pid = fork()) {
-		case -1:
-	        syserr("fork()");
-		case 0: 
-	        //jestem w dziecku
-	        //ono dalej niech sie zajmuje obsluga TCP
-			if (!DEBUG) {
-		    	printf("[PID:%d] Jestem procesem potomnym, to ja zajme sie obsluga TCP\n",getpid());
-			}
-
-			printf("Entering dispatch loop.\n");
-			if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
-			printf("Dispatch loop finished.\n");
-
-			event_free(listener_socket_event);
-			event_base_free(base);
-
-			if (!DEBUG) { 
-				printf("[PID:%d] Jestem procesem potomnym, i zaraz sie skoncze\n",getpid());
-	        }
-	        exit(0);
-		default:
-	        break;        
-	}
-
-	if (!DEBUG) {
-		printf("[PID:%d] Jestem procesem macierzystym, to ja zajme sie budowa i obsluga UDP\n",getpid());
-	}
-
-	//char buf[BUF_SIZE];
-	//ssize_t rval;
-	//int msgsock, active_clients, i, ret;
-	//int changes;
-
-	
-    //ssize_t len_udp;
-
-
-  	//initiate_client();
-  	//active_clients = 0;
-
-	sock_udp = create_udp_socket();
-
-
-
-	switch (pid = fork()) {
-		case -1:
-	        syserr("fork()");
-		case 0: 
-	        //jestem w dziecku
-	        //ono dalej niech sie zajmuje obsluga TCP
-			
-
-			if (DEBUG) {
-		    	printf("[PID: %d] Jestem kolejnym procesem potomnym, to ja zajme sie miksowaniem i przesylaniem datagramu wyjsciowego\n",getpid());
-			}
-			//czekam 500 ms 
-			/*
-			while (1) {
-				struct timespec tim, tim2;
-	   			tim.tv_sec = 15; //powinno byc 0
-	   			tim.tv_nsec = 500000000L; //0.5 s
-				nanosleep(&tim, &tim2);
-
-				//changes = poll(client, _POSIX_OPEN_MAX, 100*interval);	
-				//nzl od tego, czy sa zmiany na deskryptorach, czy nie
-				printf("Miksuje wszystkie dane\n");
-				printf("Wysylam je w petli do wszytskich kleintow\n");	
-					//miksuj wszytskie dane
-					//wyslij
-			}*/	
-	        exit(0);
-		default:
-	        break;        
-	}
-
-	if (DEBUG) {
-		printf("[PID: %d] Jestem dalej procesem macierzystym, bede odbierac po UDP i zajmowac sie klientami\n",getpid());
-	}
-
-    read_from_udp(sock_udp);
-    
+    for (;;) {
+        mix_data();
+        send_data();
+    }   
        
 	return 0;
 }
