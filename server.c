@@ -37,6 +37,7 @@
 #include "err.h"
 
  #include <time.h>
+ #include <regex.h>  
 
 
 #define PORT 14666 //numer portu, z którego korzysta serwer do komunikacji (zarówno TCP, jak i UDP)
@@ -68,6 +69,8 @@ int fifo_high;
 int buf_length = BUF_LEN;
 int interval = TX_INTERVAL;
 struct pollfd client[_POSIX_OPEN_MAX]; //gniazda klientow
+int nr;
+int sock_udp;
 
 
 void get_parameters(int argc, char *argv[]) {
@@ -240,7 +243,7 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
   	//snprintf(str, sizeof str, "%lu", (unsigned long)n); /* Method 1 */
   	snprintf(clientid, sizeof(clientid), "%" PRIu32, id); /* Method 2 */
 
-	char* data= "DATA";
+	char* data= "CLIENT";
 	char* datagram = malloc(strlen(data) + strlen(clientid) + 2);
 
 	sprintf(datagram, "%s %s\n", data, clientid);
@@ -255,6 +258,80 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
   	if (w != strlen(datagram)) syserr("nie przeszlo\n"); 
   	printf("przeszlo\n");
 }
+
+//nieprzetestowane
+void send_DATA_datagram(char *data, int no, int ack, int win, int clientid) {
+    int num = no;
+    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_no_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    
+    char str_no[str_no_size];
+    sprintf(str_no, "%d", no);
+
+    num = ack;
+    if (!ack) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_ack_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    
+    char str_ack[str_ack_size];
+    sprintf(str_ack, "%d", ack);
+
+    num = win;
+    if (!win) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_win_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    
+    char str_win[str_win_size];
+    sprintf(str_win, "%d", ack);
+
+    char* type= "DATA";
+    char* datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 2 + strlen(data));
+
+    sprintf(datagram, "%s %s %s %s\n%s", type, str_no, str_ack, str_win, data);
+    send_datagram(datagram, clientid);
+}
+
+void send_ACK_datagram(int ack, int win, int clientid) {
+    int num = ack;
+    if (!ack) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_ack_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    
+    char str_ack[str_ack_size];
+    sprintf(str_ack, "%d", ack);
+
+    num = win;
+    if (!win) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_win_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    
+    char str_win[str_win_size];
+    sprintf(str_win, "%d", ack);
+
+    char* type= "ACK";
+    char* datagram = malloc(strlen(type) + strlen(str_ack) + strlen(str_win) + 2);
+
+    sprintf(datagram, "%s %s %s %s\n%s", type, str_ack, str_win);
+    send_datagram(datagram, clientid);
+}
+
+
+//nieprzestestowane
+void send_datagram(char *datagram, int clientid) {
+    struct sockaddr_in client_address;
+    client_address.sin_family = AF_INET; 
+    //client_address.sin_addr.s_addr = htonl(INADDR_ANY); //DOPIPSAC TO DO STRUKTURY CLIENT INFO I WYCIAGAC STAMTAD !!!!
+    client_address.sin_port = htons((uint16_t) client_info[clientid].port_UDP);
+
+    ssize_t snd_len;
+    int flags = 0;
+    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
+            (struct sockaddr *) &client_address, sizeof(client_address));    
+    
+    if (snd_len != strlen(datagram)) {
+            syserr("partial / failed sendto");
+    }        
+}
+
+
+
+
 
 
 void send_a_report() {
@@ -296,8 +373,6 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 
   struct sockaddr_in sin;
   socklen_t addr_size = sizeof(struct sockaddr_in);
-  //po accept dostajemy nowe gniazdo
-  printf("Dostajemy nnowe gniazdo na accept zaraz\n");
   evutil_socket_t connection_socket = accept(sock, (struct sockaddr *)&sin, &addr_size);
 
   if(connection_socket == -1) syserr("Error accepting connection.");
@@ -395,7 +470,7 @@ void read_from_udp(int sock_udp) {
 			flags = 0; // we do not request anything special
 			len = recvfrom(sock_udp, buf, sizeof(buf), flags,
 					(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
-			printf("RECVFROM\n");
+			
 			if (len < 0)
 				syserr("error on datagram from client socket");
 			else {
@@ -506,7 +581,7 @@ int main (int argc, char *argv[]) {
   	//initiate_client();
   	//active_clients = 0;
 
-	int sock_udp = create_udp_socket();
+	sock_udp = create_udp_socket();
 
 
 

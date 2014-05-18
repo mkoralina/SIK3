@@ -28,7 +28,10 @@
 #include <netdb.h>
 #include <unistd.h>
 
-//LIBEVENT - END
+// snprintf
+#include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 
 #include <sys/types.h>
@@ -41,7 +44,8 @@
 #include <unistd.h>
 #include <string.h> /* strcmp */
 #include "err.h"
-
+#include <regex.h>  
+#include <math.h> 
 
 //DO USUNIECIA!!!!!!
 #define PORT 14666
@@ -64,6 +68,9 @@ int port_num = PORT;
 char server_name[NAME_SIZE];
 int retransfer_lim = RETRANSMIT_LIMIT;
 int sock_udp;
+struct sockaddr_in my_address;
+socklen_t rcva_len = (socklen_t) sizeof(my_address);
+int nr = 0;
 
 void get_parameters(int argc, char *argv[]) {
     
@@ -105,10 +112,9 @@ struct bufferevent *bev;
 void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
 {
     printf("Czytanie z stdin\n");
-    struct sockaddr_in my_address;
-    my_address.sin_family = AF_INET; 
+    //my_address.sin_family = AF_INET; 
     //my_address.sin_addr.s_addr = htonl(INADDR_ANY); //to trzeba wziac z argumentow jakos!!!!!
-    my_address.sin_port = htons((uint16_t) port_num);
+    //my_address.sin_port = htons((uint16_t) port_num);
 
     unsigned char buf[BUF_SIZE+1];
     memset(buf, 0, sizeof(buf));
@@ -127,13 +133,9 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
     }
 
     printf("Wysylanie po UDP komunikatu: %s o sizeof: %zu\n",buf, sizeof(buf));
-    snd_len = sendto(sock_udp, buf, sizeof(buf), flags,
+    snd_len = sendto(sock_udp, buf, strlen(buf), flags,
             (struct sockaddr *) &my_address, rcva_len);    
 
-//    snd_len = sendto(sock_udp, &buf, sizeof(buf), flags,
-//            (struct sockaddr *) &my_address, rcva_len);
-
-    printf("snd_len: %zu\n", snd_len);
     //potem poprawic na wysylanie w petli , a tak naprawde tylko partiami wielkosci WIN
     if (snd_len < 0) { // != sizeof(buf)
             syserr("partial / failed sendto"); 
@@ -154,6 +156,15 @@ void a_read_cb(struct bufferevent *bev, void *arg)
     buf[r] = 0;
     printf("\n--> %s\n", buf);
     printf("wielkosc = %d\n",r);
+
+
+    if (DEBUG) {
+        send_CLIENT_datagram(15); //<- dziala, trzeba wydobyć client id tylko 
+        char bzdury[] = "nikt tego nie zda"; 
+        send_UPLOAD_datagram(bzdury, nr);
+        send_RETRANSMIT_datagram(nr);
+        send_KEEEPALIVE_datagram();
+    }    
   }
 
 }
@@ -195,10 +206,70 @@ int create_UDP_socket() {
     if (sock < 0) {
         syserr("socket");
     }
+    my_address.sin_family = AF_INET; 
+    //my_address.sin_addr.s_addr = htonl(INADDR_ANY); //to trzeba wziac z argumentow jakos!!!!!
+    my_address.sin_port = htons((uint16_t) port_num);
     printf("Stworzyl gniazdo UDP\n");
     return sock;
 }  
 
+void send_CLIENT_datagram(uint32_t id) {       
+
+    char clientid[11]; /* 11 bytes: 10 for the digits, 1 for the null character */
+    snprintf(clientid, sizeof(clientid), "%" PRIu32, id); /* Method 2 */
+
+    char* type= "CLIENT";
+    char* datagram = malloc(strlen(type) + strlen(clientid) + 2);
+
+    sprintf(datagram, "%s %s\n", type, clientid); 
+    send_datagram(datagram);  
+}
+
+void send_UPLOAD_datagram(char *data, int no) {
+    int num = no;
+    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    
+    char str[str_size];
+    sprintf(str, "%d", no);
+
+    char* type= "UPLOAD";
+    char* datagram = malloc(strlen(type) + strlen(str) + 2 + strlen(data));
+
+    sprintf(datagram, "%s %s\n%s", type, str, data);
+    send_datagram(datagram);
+}
+
+void send_RETRANSMIT_datagram(int no) {
+    int num = no;
+    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+
+    char str[str_size];
+    sprintf(str, "%d", no);
+
+    char* type= "RETRANSMIT";
+    char* datagram = malloc(strlen(type) + strlen(str) + 2);
+
+    sprintf(datagram, "%s %s\n", type, str);
+    send_datagram(datagram);
+}
+
+void send_KEEEPALIVE_datagram() {
+    char *datagram = "KEEPALIVE\n";
+    send_datagram(datagram);
+}
+
+void send_datagram(char *datagram) {
+    ssize_t snd_len;
+    int flags = 0;
+    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
+            (struct sockaddr *) &my_address, rcva_len);    
+    
+    if (snd_len != strlen(datagram)) {
+            syserr("partial / failed sendto");
+    }        
+}
 
 int main (int argc, char *argv[]) {
     //int rc;
