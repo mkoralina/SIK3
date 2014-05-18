@@ -328,30 +328,6 @@ int main (int argc, char *argv[]) {
         event_new(base, 0, EV_READ|EV_PERSIST, stdin_cb, NULL); // 0 - standardwowe wejscie
     if(!stdin_event) syserr("event_new");
     if(event_add(stdin_event,NULL) == -1) syserr("event_add");
-  
-
- 
-/*
-    pid_t pid;
-
-    switch (pid = fork()) {
-        case -1:
-            syserr("fork()");
-        case 0: 
-            if (!DEBUG) {
-                printf("[PID: %d] Jestem procesem potomnym, to ja zajme sie przesylem po UDP\n",getpid());
-            }
-            //cos tu bedzie
-            if (!DEBUG) { 
-                printf("[PID: %d] Jestem procesem potomnym, i zaraz sie skoncze\n",getpid());
-            }
-            exit(0);
-
-        default:
-            break;        
-    }
-
-*/
 
     if (DEBUG) {
         printf("[PID: %d] Jestem procesem macierzystym, to ja zajme sie obsluga TCP\n",getpid());

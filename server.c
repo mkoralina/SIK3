@@ -442,7 +442,7 @@ void match_and_execute(char *datagram, int clientid) {
     //char *data;
     char data[BUF_SIZE];
     if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 2) {
-        printf("Zmatchowano do UPLOAD, nr = %d, dane = %s\n", nr, data);
+        printf("[TID:%d] Zmatchowano do UPLOAD, nr = %d, dane = %s\n", syscall(SYS_gettid), nr, data);
         //obsluz UPLOAD
         //wpisuejsz [dane] do kolejki zwiazanej z klientem
         //if client_info[clientid].ack == nr
@@ -450,10 +450,10 @@ void match_and_execute(char *datagram, int clientid) {
         //send_ACK_datagram()
     }
     else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
-        printf("Zmachowano do RETRANSMIT\n");
+        printf("[TID:%d] Zmachowano do RETRANSMIT\n",syscall(SYS_gettid));
     }
     else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
-        printf("Zmatchowano do KEEPALIVE\n");
+        printf("[TID:%d] Zmatchowano do KEEPALIVE\n",syscall(SYS_gettid));
     }
     else 
         syserr("Niewlasciwy format datagramu");
@@ -499,12 +499,14 @@ void create_UDP_thread(datagram_address* arg) {
     /*przygotowaniu watku*/
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
-    pthread_attr_init(&attr);
+    pthread_attr_init(&attr);-
     pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
     
     /*stworzenie watku*/
     pthread_create(&r,&attr,process_datagram,(void*)arg);
 }
+
+
 
 void read_from_udp(int sock_udp) {
 	char datagram[BUF_SIZE+1];
@@ -514,29 +516,24 @@ void read_from_udp(int sock_udp) {
 	struct sockaddr_in client_udp;
 	socklen_t rcva_len = (ssize_t) sizeof(client_udp);
 
-
-	for (;;) {
-		do {
-			flags = 0; // we do not request anything special
-			len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
-					(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
-			
-			if (len < 0)
-				  syserr("error on datagram from client socket");
-			else {
-				(void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
-						(int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
-    			printf("DATAGRAM: %s\n", datagram);
-                datagram_address da;
-                da.datagram = datagram;
-                da.sin_addr = client_udp.sin_addr;
-                da.sin_port = ntohs(client_udp.sin_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
-                create_UDP_thread(&da);
-			}
-		} while (len > 0); //dlugosc 0 jest ciezko uzyskac
-		(void) printf("finished exchange\n");
+	len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
+			(struct sockaddr *) &client_udp, &rcva_len); //rcva_len - to się zawsze na wszelki wypadek inicjuje
+	
+	if (len < 0)
+		  syserr("error on datagram from client socket");
+	else {
+		(void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
+				(int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
+		printf("DATAGRAM: %s\n", datagram);
+        datagram_address da;
+        da.datagram = (char *)malloc(BUF_SIZE);
+        strcpy(da.datagram, datagram);
+        // TU TEN SAM PROBLEM Z NADPISYWANIEM - DLACZEGO?
+        da.sin_addr = client_udp.sin_addr;
+        da.sin_port = ntohs(client_udp.sin_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
+        create_UDP_thread(&da);
+        
 	}
-
 }
 
 
@@ -677,6 +674,10 @@ int main (int argc, char *argv[]) {
 		printf("[PID: %d] Jestem dalej procesem macierzystym, bede odbierac po UDP i zajmowac sie klientami\n",getpid());
 	}
 
-	read_from_udp(sock_udp);
+
+    for (;;) {
+	   read_from_udp(sock_udp);
+    }
+       
 	return 0;
 }
