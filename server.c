@@ -276,10 +276,10 @@ void send_a_report() {
       	for(i = 0; i < MAX_CLIENTS; i++)
         	//jesli klient jest w systemie i jego kolejka aktywna
         	
+            //TODO
         	//TU TRZEBA ODKOMENTOWac!
         	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
         	if(clients[i].ev) {	
-        		printf("[PID:%d] ",getpid());
         		printf("[klient:%d] ",i);
         		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
         			 inet_ntoa(clients[i].address.sin_addr), 
@@ -290,7 +290,7 @@ void send_a_report() {
         			 client_info[i].max_FIFO
         			 );
         	}
-    	
+    	//TODO
         //normalnie powinno być:
         //create a report	
     	//multisend a report
@@ -425,8 +425,8 @@ void match_and_execute(char *datagram, int clientid) {
     else 
         //syserr("Niewlasciwy format datagramu");
         printf("Niewlasciwy format datagramu\n");
-    //jesli zmachowano do upload
-}    //do tego pamietaj o updateowaniu wszystkich wskaxnikow (ack, nr, win itp.)
+
+}    //TODO: do tego pamietaj o updateowaniu wszystkich wskaxnikow (ack, nr, win itp.)
     
 
 void add_new_client(char * datagram, struct in_addr sin_addr, unsigned short sin_port) {
