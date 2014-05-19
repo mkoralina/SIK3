@@ -72,7 +72,7 @@ int retransfer_lim = RETRANSMIT_LIMIT;
 int sock_udp;
 struct sockaddr_in6 my_address;
 socklen_t rcva_len = (socklen_t) sizeof(my_address);
-int last_sent = 0; /* nr z polecen */
+int last_sent = -1; /* nr z polecen */
 int ack = -1;
 int win = 0;
 int clientid = -1; /* -1 to kleint niezidentyfikowany */
@@ -189,24 +189,29 @@ void * send_KEEEPALIVE_datagram(void * arg) {
 }
 
 void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
-    printf("Czytanie z stdin\n");
+    //printf("Czytanie z stdin\n");
     char buf[BUF_SIZE+1];
     memset(buf, 0, sizeof(buf));
 
-    // TODO: czytanie wielkosci okna podanego przez serwer: win
-    // doczytaj jeszcze jak to jest z tymi numerami
-    // if (ack > last_sent && win > 0) { czytaj dane i wysylaj datagram UPLOAD}
-    int r = read(descriptor, buf, BUF_SIZE);
-    if(r < 0) syserr("w evencie: read (from stdin)");
-    if(r == 0) {
-        fprintf(stderr, "stdin closed. Exiting event loop.\n");
-        if(event_base_loopbreak(base) == -1) 
-            syserr("event_base_loopbreak");
-        return;
-    }
 
-    last_sent++;
-    send_UPLOAD_datagram(buf, last_sent);      
+    // TODO: doczytaj jeszcze jak to jest z tymi numerami
+    if (ack > last_sent && win > 0) {
+        int r = read(descriptor, buf, win);
+        if(r < 0) syserr("w evencie: read (from stdin)");
+        if(r == 0) {
+            fprintf(stderr, "stdin closed. Exiting event loop.\n");
+            if(event_base_loopbreak(base) == -1) 
+                syserr("event_base_loopbreak");
+            return;
+        }
+
+        last_sent++;
+        printf("send_UPLOAD_datagram(%s, %d)\n", buf, last_sent);
+        send_UPLOAD_datagram(buf, last_sent); 
+    }   
+
+    // TODO: UWAGA! bo to dziala w kolko, a win nie zmniejszam i czy to nie wcyzta czasem nowego komunikatu juz
+    // mimo, ze nie powinno ?? (czy ack na to nie pozwoli?)      
 }
 
 void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
@@ -224,14 +229,14 @@ void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
                 printf("Zidentyfikowano: clientid = %d\n",clientid);
             }
         }
-    }   
+    }
+    send_CLIENT_datagram(clientid);   
 }
 
 /* Funkcja czyta z TCP, wyrzuca raporty na stdout */
 void a_read_cb(struct bufferevent *bev, void *arg)
 {  
     // TODO: kontrola, czy jest caly czas polaczenie, czyli pewnie jakiś timeout trzeba ustawic!
-    printf("A READ CB\n");
 
     if (clientid < 0) {
         read_CLIENT_datagram(bev, arg);
@@ -240,8 +245,8 @@ void a_read_cb(struct bufferevent *bev, void *arg)
     // TODO: do usuniecia to!
     if (DEBUG) {
         //send_CLIENT_datagram(15); //<- dziala, trzeba wydobyć client id tylko 
-        char bzdury[] = "nikt tego nie zda"; 
-        send_UPLOAD_datagram(bzdury, last_sent);
+        //char bzdury[] = "nikt tego nie zda"; 
+        //send_UPLOAD_datagram(bzdury, last_sent);
         //send_RETRANSMIT_datagram(last_sent);
         //send_KEEEPALIVE_datagram();
     }
@@ -291,8 +296,6 @@ int create_UDP_socket() {
     return sock;
 }  
 
-
-
 void * event_loop(void * arg) {
 
     printf("Entering dispatch loop.\n");
@@ -316,8 +319,13 @@ void create_thread(void * (*func)(void *)) {
 void match_and_execute(char *datagram) {
     int nr;
     char data[BUF_SIZE+1];
-    if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 4) {
-        printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data);  
+    memset(data, 0, BUF_SIZE);
+    //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
+    if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
+        printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data); 
+        if (!strlen(data)) {
+            printf("Przeslano pusty bufor\n");
+        } 
         // TODO: i co? jak sie teraz tu zmieni ACK, to tam na gorze sie wlaczy petla do czytania z stdin?
         //obsluz DATA
         //wpisuejsz [dane] do kolejki zwiazanej z klientem
@@ -326,12 +334,20 @@ void match_and_execute(char *datagram) {
         //send_ACK_datagram()
     }
     else if (sscanf(datagram, "ACK %d %d", &ack, &win) == 2) {
-        printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);
+        printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
     }
     else 
         //syserr("Niewlasciwy format datagramu");
         printf("Niewlasciwy format datagramu\n");
-}   
+} 
+
+char * addr_to_str(struct sockaddr_in6 *addr) {
+    char * str = malloc(sizeof(char) * INET6_ADDRSTRLEN);
+    //char str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
+    //if (DEBUG) printf("adres klienta: %s\n", str);
+    return str;
+}  
 
 void read_from_UDP() {
     // TODO: cala komunikacja jako odbiorca po UDP (powinien wystarczyc jeden watek)
@@ -342,12 +358,12 @@ void read_from_UDP() {
     char datagram[BUF_SIZE+1];
     memset(datagram, 0, sizeof(datagram)); 
     int flags = 0; 
-    struct sockaddr_in server_udp;
+    struct sockaddr_in6 server_udp;
     socklen_t rcva_len = (ssize_t) sizeof(server_udp);
             
     for (;;) {
         do {         
-
+            
             len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
                     (struct sockaddr *) &server_udp, &rcva_len); 
 
@@ -355,7 +371,7 @@ void read_from_UDP() {
                   syserr("error on datagram from server socket");
             else {
                 if (DEBUG) {
-                    (void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(server_udp.sin_addr), ntohs(server_udp.sin_port), len,
+                    (void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", addr_to_str(&server_udp), ntohs(server_udp.sin6_port), len,
                         (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
                     printf("Otrzymano: %s\n", datagram);
                 }    
@@ -404,8 +420,8 @@ int main (int argc, char *argv[]) {
     }
 
     get_parameters(argc, argv);
-    set_event_TCP_stdin();
     sock_udp = create_UDP_socket(); 
+    set_event_TCP_stdin();    
     create_thread(&event_loop); //przejmie czytanie z stdin oraz z TCP
     //create_thread(&send_KEEEPALIVE_datagram);
     read_from_UDP();
