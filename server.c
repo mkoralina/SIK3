@@ -135,7 +135,7 @@ void init_clients(void)
 }
 
 char * addr_to_str(struct sockaddr_in6 *addr) {
-    char str[INET6_ADDRSTRLEN];
+    char * str = malloc(sizeof(char) * INET6_ADDRSTRLEN);
     inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
     if (DEBUG) printf("adres klienta: %s\n", str);
     return str;
@@ -178,6 +178,22 @@ void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
     printf("[%s:%d] %s\n", addr_to_str(&cl->address), ntohs(cl->address.sin6_port), buf);
 }
 
+//nieprzestestowane
+void send_datagram(char *datagram, int clientid) {
+    struct sockaddr_in client_address;
+    client_address.sin_family = AF_INET; 
+    //client_address.sin_addr.s_addr = htonl(INADDR_ANY); //DOPIPSAC TO DO STRUKTURY CLIENT INFO I WYCIAGAC STAMTAD !!!!
+    client_address.sin_port = htons((uint16_t) client_info[clientid].port_UDP);
+
+    ssize_t snd_len;
+    int flags = 0;
+    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
+            (struct sockaddr *) &client_address, sizeof(client_address));    
+    
+    if (snd_len != strlen(datagram)) {
+            syserr("partial / failed sendto");
+    }        
+}
 
 void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
 	printf("tutaj clientid: %d\n", id);
@@ -252,29 +268,14 @@ void send_ACK_datagram(int ack, int win, int clientid) {
     char* type= "ACK";
     char* datagram = malloc(strlen(type) + strlen(str_ack) + strlen(str_win) + 2);
 
-    sprintf(datagram, "%s %s %s %s\n%s", type, str_ack, str_win);
+    sprintf(datagram, "%s %s %s\n", type, str_ack, str_win);
     send_datagram(datagram, clientid);
 }
 
-//nieprzestestowane
-void send_datagram(char *datagram, int clientid) {
-    struct sockaddr_in client_address;
-    client_address.sin_family = AF_INET; 
-    //client_address.sin_addr.s_addr = htonl(INADDR_ANY); //DOPIPSAC TO DO STRUKTURY CLIENT INFO I WYCIAGAC STAMTAD !!!!
-    client_address.sin_port = htons((uint16_t) client_info[clientid].port_UDP);
-
-    ssize_t snd_len;
-    int flags = 0;
-    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
-            (struct sockaddr *) &client_address, sizeof(client_address));    
-    
-    if (snd_len != strlen(datagram)) {
-            syserr("partial / failed sendto");
-    }        
-}
 
 
-void send_a_report() {
+
+void * send_a_report(void * arg) {
 	//wersja beta:
 	//create and print a report
     for (;;) {
@@ -291,7 +292,7 @@ void send_a_report() {
         		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
         			 addr_to_str(&clients[i].address), 
         			 ntohs(clients[i].address.sin6_port),
-        			 strlen(client_info[i].buf_FIFO),
+        			 strlen(*client_info[i].buf_FIFO), //TODO: to jest i tak do zmiany, cala struktura
         			 fifo_queue_size,
         			 client_info[i].min_FIFO,
         			 client_info[i].max_FIFO
@@ -392,7 +393,7 @@ int create_UDP_socket() {
         syserr("bind");
 
     if (DEBUG) {
-  		printf("UDP : Server.sin_addr.s_addr: %hu\n", server.sin6_addr);
+  		printf("UDP : Server.sin6_addr: %s\n", addr_to_str(&server));
   		printf("UDP : Accepting on port: %hu\n",ntohs(server.sin6_port));
   	}
     return sock; 	
@@ -423,12 +424,12 @@ int get_clientid(struct in_addr sin_addr, unsigned short sin_port) {
 }
 
 void match_and_execute(char *datagram, int clientid) {
-    if (DEBUG) printf("[TID:%d] match_and_execute: %s\n",syscall(SYS_gettid),datagram);
+    if (DEBUG) printf("[TID:%li] match_and_execute: %s\n",syscall(SYS_gettid),datagram);
     int nr;    
     //char *data;
     char data[BUF_SIZE];
     if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 2) {
-        printf("[TID:%d] Zmatchowano do UPLOAD, nr = %d, dane = %s\n", syscall(SYS_gettid), nr, data);
+        printf("[TID:%li] Zmatchowano do UPLOAD, nr = %d, dane = %s\n", syscall(SYS_gettid), nr, data);
         //obsluz UPLOAD
         //wpisuejsz [dane] do kolejki zwiazanej z klientem
         //if client_info[clientid].ack == nr
@@ -436,10 +437,10 @@ void match_and_execute(char *datagram, int clientid) {
         //send_ACK_datagram()
     }
     else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
-        printf("[TID:%d] Zmachowano do RETRANSMIT\n",syscall(SYS_gettid));
+        printf("[TID:%li] Zmachowano do RETRANSMIT\n",syscall(SYS_gettid));
     }
     else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
-        printf("[TID:%d] Zmatchowano do KEEPALIVE\n",syscall(SYS_gettid));
+        printf("[TID:%li] Zmatchowano do KEEPALIVE\n",syscall(SYS_gettid));
     }
     else 
         //syserr("Niewlasciwy format datagramu");
@@ -449,7 +450,7 @@ void match_and_execute(char *datagram, int clientid) {
     
 
 void add_new_client(char * datagram, struct in_addr sin_addr, unsigned short sin_port) {
-    if (DEBUG) printf("[TID:%d] add_new_client\n",syscall(SYS_gettid));
+    if (DEBUG) printf("[TID:%li] add_new_client\n",syscall(SYS_gettid));
     if (DEBUG) printf("datagram: %s\n",datagram);
     int id;
     if (sscanf(datagram, "CLIENT %d\n", &id) == 1) {
@@ -462,11 +463,11 @@ void add_new_client(char * datagram, struct in_addr sin_addr, unsigned short sin
         syserr("Bledny datagram poczatkowy\n");
 }
 
-void process_datagram(void *param) {
-    datagram_address da = *(datagram_address*)param;
-    char *datagram = da.datagram;
-    struct in_addr sin_addr = da.sin_addr;
-    unsigned short sin_port = da.sin_port;
+void * process_datagram(void *param) {
+  //datagram_address da = *(datagram_address*)param;
+  //char *datagram = da.datagram;
+  //struct in_addr sin_addr = da.sin_addr;
+  //unsigned short sin_port = da.sin_port;
     
    // match_and_execute(datagram, 2); //na sztywno do testow
 
@@ -480,9 +481,41 @@ void process_datagram(void *param) {
     else {
         match_and_execute(datagram, clientid);
     }   */
+    return 0;    
 }
 
-void read_from_udp() {
+void create_UDP_thread(datagram_address* arg) {
+    /*przygotowaniu watku*/
+    pthread_t r; /*wynik*/
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
+    
+    /*stworzenie watku*/
+    pthread_create(&r,&attr,process_datagram,(void*)arg);
+}
+
+void * event_loop(void * arg) {
+
+    printf("Entering dispatch loop.\n");
+    if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
+    printf("Dispatch loop finished.\n");
+
+    event_free(listener_socket_event);
+    event_base_free(base); 
+    return 0;   
+}
+
+void create_thread(void * (*func)(void *)) {
+    pthread_t r; /*wynik*/
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
+
+    pthread_create(&r,&attr,*func,NULL);        
+}
+
+void * read_from_udp(void * arg) {
     ssize_t len;
     for (;;) {
         do {
@@ -527,36 +560,6 @@ void read_from_udp() {
     }
 }
 
-
-void create_UDP_thread(datagram_address* arg) {
-    /*przygotowaniu watku*/
-    pthread_t r; /*wynik*/
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);-
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
-    
-    /*stworzenie watku*/
-    pthread_create(&r,&attr,process_datagram,(void*)arg);
-}
-
-void event_loop() {
-
-    printf("Entering dispatch loop.\n");
-    if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
-    printf("Dispatch loop finished.\n");
-
-    event_free(listener_socket_event);
-    event_base_free(base);    
-}
-
-void create_thread(void (*func)()) {
-    pthread_t r; /*wynik*/
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
-
-    pthread_create(&r,&attr,*func,NULL);        
-}
 
 void mix_data() {
     //miskowanie danych

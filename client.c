@@ -112,10 +112,11 @@ void get_parameters(int argc, char *argv[]) {
             retransfer_lim = atoi(argv[j+1]); // TODO: wywali blad, jesli X nie jest intem?
         }
     }
-    //chwilowo
-    //if (!server_name_set) {
-    //    syserr("Client usage: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
-    //}
+    
+    if (!server_name_set) {
+        syserr("Client usage: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
+    }
+
     if (DEBUG) {            
         printf("port_num: %d\n", port_num);
         printf("server_name: %s\n", server_name);
@@ -123,14 +124,74 @@ void get_parameters(int argc, char *argv[]) {
     }
 }
 
-void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
-{
-    printf("Czytanie z stdin\n");
-    unsigned char buf[BUF_SIZE+1];
-    memset(buf, 0, sizeof(buf));
-    socklen_t rcva_len = (socklen_t) sizeof(my_address);
+void send_datagram(char *datagram) {
     ssize_t snd_len;
     int flags = 0;
+    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
+            (struct sockaddr *) &my_address, rcva_len);    
+    
+    if (snd_len != strlen(datagram)) {
+            syserr("partial / failed sendto");
+    }        
+}
+
+void send_CLIENT_datagram(uint32_t id) {       
+
+    char clientid[11]; /* 11 bytes: 10 for the digits, 1 for the null character */
+    snprintf(clientid, sizeof(clientid), "%" PRIu32, id); /* Method 2 */
+
+    char* type= "CLIENT";
+    char* datagram = malloc(strlen(type) + strlen(clientid) + 2);
+
+    sprintf(datagram, "%s %s\n", type, clientid); 
+    send_datagram(datagram);  
+}
+
+void send_UPLOAD_datagram(char *data, int no) {
+    int num = no;
+    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    
+    char str[str_size];
+    sprintf(str, "%d", no);
+
+    char* type= "UPLOAD";
+    char* datagram = malloc(strlen(type) + strlen(str) + 2 + strlen(data));
+
+    sprintf(datagram, "%s %s\n%s", type, str, data);
+    send_datagram(datagram);    
+}
+
+void send_RETRANSMIT_datagram(int no) {
+    int num = no;
+    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+
+    char str[str_size];
+    sprintf(str, "%d", no);
+
+    char* type= "RETRANSMIT";
+    char* datagram = malloc(strlen(type) + strlen(str) + 2);
+
+    sprintf(datagram, "%s %s\n", type, str);
+    send_datagram(datagram);
+}
+
+void * send_KEEEPALIVE_datagram(void * arg) {
+    for (;;) {
+        struct timespec tim, tim2;
+        tim.tv_sec = 0; //0s
+        tim.tv_nsec = 100000000; //0.1s
+        nanosleep(&tim, &tim2);    
+        char *datagram = "KEEPALIVE\n";
+        send_datagram(datagram);
+    }    
+}
+
+void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
+    printf("Czytanie z stdin\n");
+    char buf[BUF_SIZE+1];
+    memset(buf, 0, sizeof(buf));
 
     // TODO: czytanie wielkosci okna podanego przez serwer: win
     // doczytaj jeszcze jak to jest z tymi numerami
@@ -146,6 +207,24 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
 
     last_sent++;
     send_UPLOAD_datagram(buf, last_sent);      
+}
+
+void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
+    if (DEBUG) {
+        printf("read_CLIENT_datagram\n");
+    }
+    char buf[BUF_SIZE+1];
+    while(evbuffer_get_length(bufferevent_get_input(bev))) {
+        int r = bufferevent_read(bev, buf, BUF_SIZE);
+        if(r == -1) syserr("bufferevent_read");
+        buf[r] = 0;
+        if (sscanf(buf, "CLIENT %d\n", &clientid) == 1) {
+            if (DEBUG) {
+                printf("Otrzymano: %s",buf);
+                printf("Zidentyfikowano: clientid = %d\n",clientid);
+            }
+        }
+    }   
 }
 
 /* Funkcja czyta z TCP, wyrzuca raporty na stdout */
@@ -197,23 +276,7 @@ void an_event_cb(struct bufferevent *bev, short what, void *arg) {
 }
 
 
-void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
-    if (DEBUG) {
-        printf("read_CLIENT_datagram\n");
-    }
-    char buf[BUF_SIZE+1];
-    while(evbuffer_get_length(bufferevent_get_input(bev))) {
-        int r = bufferevent_read(bev, buf, BUF_SIZE);
-        if(r == -1) syserr("bufferevent_read");
-        buf[r] = 0;
-        if (sscanf(buf, "CLIENT %d\n", &clientid) == 1) {
-            if (DEBUG) {
-                printf("Otrzymano: %s",buf);
-                printf("Zidentyfikowano: clientid = %d\n",clientid);
-            }
-        }
-    }   
-}
+
 
 
 int create_UDP_socket() {
@@ -228,81 +291,20 @@ int create_UDP_socket() {
     return sock;
 }  
 
-void send_CLIENT_datagram(uint32_t id) {       
 
-    char clientid[11]; /* 11 bytes: 10 for the digits, 1 for the null character */
-    snprintf(clientid, sizeof(clientid), "%" PRIu32, id); /* Method 2 */
 
-    char* type= "CLIENT";
-    char* datagram = malloc(strlen(type) + strlen(clientid) + 2);
-
-    sprintf(datagram, "%s %s\n", type, clientid); 
-    send_datagram(datagram);  
-}
-
-void send_UPLOAD_datagram(char *data, int no) {
-    int num = no;
-    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
-    
-    char str[str_size];
-    sprintf(str, "%d", no);
-
-    char* type= "UPLOAD";
-    char* datagram = malloc(strlen(type) + strlen(str) + 2 + strlen(data));
-
-    sprintf(datagram, "%s %s\n%s", type, str, data);
-    send_datagram(datagram);    
-}
-
-void send_RETRANSMIT_datagram(int no) {
-    int num = no;
-    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
-
-    char str[str_size];
-    sprintf(str, "%d", no);
-
-    char* type= "RETRANSMIT";
-    char* datagram = malloc(strlen(type) + strlen(str) + 2);
-
-    sprintf(datagram, "%s %s\n", type, str);
-    send_datagram(datagram);
-}
-
-void send_KEEEPALIVE_datagram() {
-    for (;;) {
-        struct timespec tim, tim2;
-        tim.tv_sec = 0; //0s
-        tim.tv_nsec = 100000000; //0.1s
-        nanosleep(&tim, &tim2);    
-        char *datagram = "KEEPALIVE\n";
-        send_datagram(datagram);
-    }    
-}
-
-void send_datagram(char *datagram) {
-    ssize_t snd_len;
-    int flags = 0;
-    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
-            (struct sockaddr *) &my_address, rcva_len);    
-    
-    if (snd_len != strlen(datagram)) {
-            syserr("partial / failed sendto");
-    }        
-}
-
-void event_loop() {
+void * event_loop(void * arg) {
 
     printf("Entering dispatch loop.\n");
     if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
     printf("Dispatch loop finished.\n");
 
     bufferevent_free(bev);
-    event_base_free(base);   
+    event_base_free(base);  
+    return 0; 
 }
 
-void create_thread(void (*func)()) {
+void create_thread(void * (*func)(void *)) {
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
     pthread_attr_init(&attr);
