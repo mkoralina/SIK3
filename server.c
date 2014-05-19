@@ -117,7 +117,7 @@ struct info {
 
 typedef struct datagram_address {
     char * datagram;
-    struct in_addr sin_addr;
+    struct in6_addr sin_addr;
     unsigned short sin_port;
 } datagram_address;
 
@@ -136,6 +136,7 @@ void init_clients(void)
 
 char * addr_to_str(struct sockaddr_in6 *addr) {
     char * str = malloc(sizeof(char) * INET6_ADDRSTRLEN);
+    //char str[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
     if (DEBUG) printf("adres klienta: %s\n", str);
     return str;
@@ -278,6 +279,7 @@ void send_ACK_datagram(int ack, int win, int clientid) {
 void * send_a_report(void * arg) {
 	//wersja beta:
 	//create and print a report
+    
     for (;;) {
     	printf("\n");
     	int i;
@@ -292,7 +294,7 @@ void * send_a_report(void * arg) {
         		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
         			 addr_to_str(&clients[i].address), 
         			 ntohs(clients[i].address.sin6_port),
-        			 strlen(*client_info[i].buf_FIFO), //TODO: to jest i tak do zmiany, cala struktura
+        			 strlen(client_info[i].buf_FIFO), //TODO: powinno byc: *client_info[i].buf_FIFO, ale wtedy Naruszenie ochrony pamieci, i tak do zmiany ta struktura
         			 fifo_queue_size,
         			 client_info[i].min_FIFO,
         			 client_info[i].max_FIFO
@@ -307,6 +309,7 @@ void * send_a_report(void * arg) {
         tim.tv_sec = 10; //1s
         tim.tv_nsec = 0; //0
         nanosleep(&tim, &tim2); 
+
     }       
 }
 
@@ -536,7 +539,7 @@ void * read_from_udp(void * arg) {
 
             int flags = 0; 
             
-            struct sockaddr_in client_udp;
+            struct sockaddr_in6 client_udp;
             socklen_t rcva_len = (ssize_t) sizeof(client_udp);
 
             len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
@@ -545,13 +548,13 @@ void * read_from_udp(void * arg) {
             if (len < 0)
                   syserr("error on datagram from client socket");
             else {
-                (void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", inet_ntoa(client_udp.sin_addr), ntohs(client_udp.sin_port), len,
+                (void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", addr_to_str(&client_udp), ntohs(client_udp.sin6_port), len,
                         (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
                 printf("DATAGRAM: %s\n", datagram);
                 struct datagram_address da;
                 da.datagram = datagram;
-                da.sin_addr = client_udp.sin_addr;
-                da.sin_port = ntohs(client_udp.sin_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
+                da.sin_addr = client_udp.sin6_addr;
+                da.sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
                 create_UDP_thread(&da);
                 free(datagram);
             }
