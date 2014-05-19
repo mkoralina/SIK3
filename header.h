@@ -31,6 +31,7 @@
 #include "err.h"
 
 #include <time.h>
+#include <math.h> 
 #include <sys/types.h> 
 
 #define TRUE 1

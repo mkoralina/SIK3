@@ -36,7 +36,7 @@ evutil_socket_t listener_socket;
 struct event_base *base;
 struct event *listener_socket_event;
 
-
+//TODO: sprawdzenie poprawnosci podanych parametrow
 void get_parameters(int argc, char *argv[]) {
 	int fifo_high_set = 0;
 	int j;
@@ -44,28 +44,28 @@ void get_parameters(int argc, char *argv[]) {
     {
         if (strcmp(argv[j], "-p") == 0) 
         {
-        	port_num = atoi(argv[j]);  
+        	port_num = atoi(argv[j+1]);  
         }
         else if (strcmp(argv[j], "-F") == 0)
     	{    
-        	fifo_queue_size = atoi(argv[j]);
+        	fifo_queue_size = atoi(argv[j+1]);
         }
         else if (strcmp(argv[j], "-L") == 0)
         {
-        	fifo_low = atoi(argv[j]);
+        	fifo_low = atoi(argv[j+1]);
         }
         else if (strcmp(argv[j], "-H") == 0)
         {
-        	fifo_high = atoi(argv[j]);
+        	fifo_high = atoi(argv[j+1]);
         	fifo_high_set = 1;
         }
         else if (strcmp(argv[j], "-X") == 0)
         {
-        	buf_length = atoi(argv[j]);
+        	buf_length = atoi(argv[j+1]);
         }
         else if (strcmp(argv[j], "-i") == 0)
         {
-        	interval = atoi(argv[j]);
+        	interval = atoi(argv[j+1]);
         }
     }
 
@@ -95,11 +95,9 @@ static void catch_int (int sig) {
   	exit(EXIT_SUCCESS);
 }
 
-// LIBEVENT
-
 struct connection_description {
     int id;	
-    struct sockaddr_in address;
+    struct sockaddr_in6 address; //IPv4 + IPv6
     evutil_socket_t sock;
     struct event *ev;
 };
@@ -111,7 +109,7 @@ struct info {
     struct in_addr addr_UDP;
 	int min_FIFO;
 	int max_FIFO;
-	char **buf_FIFO;
+	char **buf_FIFO; //TODO: zamiast tego, jedna tablica indeksowana id kleinta z wszytskimi buforami
 	int buf_state;
     int nr; //ostatnio odebrany datagram
     int ack; //oczekiwany od klienta
@@ -136,6 +134,14 @@ void init_clients(void)
     }
 }
 
+char * addr_to_str(struct sockaddr_in6 *addr) {
+    char str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
+    if (DEBUG) printf("adres klienta: %s\n", str);
+    return str;
+}
+
+
 struct connection_description *get_client_slot(void)
 {
     int i;
@@ -155,10 +161,10 @@ void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
     if(r <= 0) {
         if(r < 0) {
             fprintf(stderr, "Error (%s) while reading data from %s:%d. Closing connection.\n",
-    	       strerror(errno), inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port));//inet_ntoa prostsza, starsza wersja ntop, ntop jest ogólna, podaje sie rodzine adresow
+    	       strerror(errno), addr_to_str(&cl->address), ntohs(cl->address.sin6_port));//inet_ntoa prostsza, starsza wersja ntop, ntop jest ogólna, podaje sie rodzine adresow
         } else {
             fprintf(stderr, "Connection from %s:%d closed.\n",
-    	       inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port));
+    	       addr_to_str(&cl->address), ntohs(cl->address.sin6_port));
         }
         if(event_del(cl->ev) == -1) syserr("Can't delete the event.");
     	//zwalniamy meijsce w tablicy
@@ -169,7 +175,7 @@ void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
     }
     buf[r] = 0;
     //wypisujemy adres i port klienta ladnie
-    printf("[%s:%d] %s\n", inet_ntoa(cl->address.sin_addr), ntohs(cl->address.sin_port), buf);
+    printf("[%s:%d] %s\n", addr_to_str(&cl->address), ntohs(cl->address.sin6_port), buf);
 }
 
 
@@ -267,6 +273,7 @@ void send_datagram(char *datagram, int clientid) {
     }        
 }
 
+
 void send_a_report() {
 	//wersja beta:
 	//create and print a report
@@ -282,8 +289,8 @@ void send_a_report() {
         	if(clients[i].ev) {	
         		printf("[klient:%d] ",i);
         		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
-        			 inet_ntoa(clients[i].address.sin_addr), 
-        			 ntohs(clients[i].address.sin_port),
+        			 addr_to_str(&clients[i].address), 
+        			 ntohs(clients[i].address.sin6_port),
         			 strlen(client_info[i].buf_FIFO),
         			 fifo_queue_size,
         			 client_info[i].min_FIFO,
@@ -308,26 +315,34 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 {
     struct event_base *base = (struct event_base *)arg;
 
-    struct sockaddr_in sin;
-    socklen_t addr_size = sizeof(struct sockaddr_in);
+    struct sockaddr_in6 sin;
+    socklen_t addr_size = sizeof(struct sockaddr_in6);
     evutil_socket_t connection_socket = accept(sock, (struct sockaddr *)&sin, &addr_size);
 
     if(connection_socket == -1) syserr("Error accepting connection.");
   
+    getpeername(connection_socket, (struct sockaddr *)&sin, &addr_size);
+    
+    char str_addr[INET6_ADDRSTRLEN];
+
+
+    if(inet_ntop(AF_INET6, &sin.sin6_addr, str_addr, sizeof(str_addr))) {
+        printf("Adres klienta: %s\n", str_addr);
+        printf("Port klienta: %d\n", ntohs(sin.sin6_port));
+    }
+
     //chcemy zapisac tego kleinta	
     struct connection_description *cl = get_client_slot();
     if(!cl) {
         close(connection_socket);
-        fprintf(stderr, "Ignoring connection attempt from %s:%d due to lack of space.\n",
-	       inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
-        return;
+        syserr("get_client_slot, too many clients");
     }
   
     //kopiujemy adres kleinta do struktury
-    memcpy(&(cl->address), &sin, sizeof(struct sockaddr_in));
+    memcpy(&(cl->address), &sin, sizeof(struct sockaddr_in6));
     cl->sock = connection_socket;
     //dodaj info o kliencie 
-    client_info[cl->id].port_TCP = ntohs(sin.sin_port);
+    client_info[cl->id].port_TCP = ntohs(sin.sin6_port);
 
     send_CLIENT_datagram(connection_socket,cl->id);
 
@@ -357,26 +372,30 @@ void init_client_info(int fifo_queue_size) {
 }
 
 
-int create_udp_socket() {
-	struct sockaddr_in server;
-
-	int sock_udp = socket(AF_INET, SOCK_DGRAM, 0); 
-    if (sock_udp < 0)
+int create_UDP_socket() {
+	struct sockaddr_in6 server;
+    int on = 1;
+	int sock = socket(AF_INET6, SOCK_DGRAM, 0); 
+    if (sock < 0)
         syserr("socket"); 
 
-	server.sin_family = AF_INET; 
-  	server.sin_addr.s_addr = htonl(INADDR_ANY); //we listen on all interfaces
-  	server.sin_port = htons(port_num); //port num podany na wejsciu 
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+        (char *)&on,sizeof(on)) < 0)
+        syserr("setsockopt(SO_REUSEADDR)");
+
+	server.sin6_family = AF_INET6; 
+  	server.sin6_addr = in6addr_any; //wszyskie interfejsy
+  	server.sin6_port = htons(port_num); //port num podany na wejsciu 
 	
-    if (bind(sock_udp, (struct sockaddr *) &server,
+    if (bind(sock, (struct sockaddr *) &server,
       (socklen_t) sizeof(server)) < 0)
         syserr("bind");
 
     if (DEBUG) {
-  		printf("UDP : Server.sin_addr.s_addr: %hu\n", server.sin_addr.s_addr);
-  		printf("UDP : Accepting on port: %hu\n",ntohs(server.sin_port));
+  		printf("UDP : Server.sin_addr.s_addr: %hu\n", server.sin6_addr);
+  		printf("UDP : Accepting on port: %hu\n",ntohs(server.sin6_port));
   	}
-    return sock_udp; 	
+    return sock; 	
 }
 
 //nieprzetestowane
@@ -520,18 +539,6 @@ void create_UDP_thread(datagram_address* arg) {
     pthread_create(&r,&attr,process_datagram,(void*)arg);
 }
 
-//ZBIC WSZYTSKIE CREATE THREAD za pomoca pointerow do funkcji (1.arg - funkcja, 2. arg - arg dla funkcji, jesli jest, NULL wpp)
-void create_reading_thread() {
-    /*przygotowaniu watku*/
-    pthread_t r; /*wynik*/
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
-    
-    /*stworzenie watku*/
-    pthread_create(&r,&attr,read_from_udp,NULL);    
-}
-
 void event_loop() {
 
     printf("Entering dispatch loop.\n");
@@ -542,22 +549,13 @@ void event_loop() {
     event_base_free(base);    
 }
 
-void create_event_thread() {
+void create_thread(void (*func)()) {
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
-    pthread_attr_init(&attr);-
+    pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
 
-    pthread_create(&r,&attr,event_loop,NULL);    
-}
-
-void create_report_thread() {
-    pthread_t r; /*wynik*/
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);-
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
-
-    pthread_create(&r,&attr,send_a_report,NULL);     
+    pthread_create(&r,&attr,*func,NULL);        
 }
 
 void mix_data() {
@@ -568,6 +566,43 @@ void send_data() {
     //przesylanie do wszytskich klientow
 }
 
+void set_event_TCP() {
+    base = event_base_new();
+    if(!base) syserr("Error creating base.");
+
+    
+    listener_socket = socket(AF_INET6, SOCK_STREAM, 0);
+    if(listener_socket == -1 ||
+        evutil_make_listen_socket_reuseable(listener_socket) ||
+        evutil_make_socket_nonblocking(listener_socket)) { 
+        //gniazdo zwroci blad, jesli nie ma danych do odczytu (dlatego, ze mamy pod tym funkcje poll ktora nam zwraca, kiedy sa dane, wiec powinny byc
+        syserr("Error preparing socket.");
+    }
+
+    //ponowne uzycie adresu lokalnego (przy kolejnym uruch serwera)
+    int on = 1;
+    if (setsockopt(listener_socket, SOL_SOCKET, SO_REUSEADDR,
+                      (char *)&on,sizeof(on)) < 0)
+         syserr("setsockopt(SO_REUSEADDR)");
+
+    struct sockaddr_in6 sin;
+    memset(&sin, 0, sizeof(sin));
+    sin.sin6_family = AF_INET6;
+    sin.sin6_addr = in6addr_any;
+    sin.sin6_port = htons(port_num);
+    if(bind(listener_socket, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
+        syserr("bind");
+    }
+
+    if(listen(listener_socket, 5) == -1) syserr("listen");
+
+    listener_socket_event = 
+        event_new(base, listener_socket, EV_READ|EV_PERSIST, listener_socket_cb, (void *)base);
+    if(!listener_socket_event) syserr("Error creating event for a listener socket.");
+
+    if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
+}
+
 int main (int argc, char *argv[]) {
 
     if (DEBUG && argc == 1) {
@@ -575,54 +610,21 @@ int main (int argc, char *argv[]) {
          "-H [fifo_high_watermark] -X [buffer_size] -i [tx_interval] \n");
     }
 
+    /* Ctrl-C konczy porogram */
+    if (signal(SIGINT, catch_int) == SIG_ERR) {
+        syserr("Unable to change signal handler\n");
+    }
+
 	get_parameters(argc, argv);
 	init_client_info(fifo_queue_size);
+  	init_clients(); //gniazda dla TCP
+    set_event_TCP();
 
-	/* Ctrl-C konczy porogram */
-  	if (signal(SIGINT, catch_int) == SIG_ERR) {
-    	syserr("Unable to change signal handler\n");
-  	}
-
-  	// <LIBEVENT>
-	
-
-  	init_clients();
-
-  	base = event_base_new();
-  	if(!base) syserr("Error creating base.");
-
-  	
-  	listener_socket = socket(AF_INET, SOCK_STREAM, 0);
-  	if(listener_socket == -1 ||
-     	evutil_make_listen_socket_reuseable(listener_socket) ||
-     	evutil_make_socket_nonblocking(listener_socket)) { 
-     	//gniazdfo zwroci blad, jesli nie ma danych do odczytu (dlatego, ze mamy pod tym funkcje poll ktora nam zwraca, kiedy sa dane, wiec powinny byc
-    	syserr("Error preparing socket.");
-  	}
-
-  	struct sockaddr_in sin;
-  	sin.sin_family = AF_INET;
-  	sin.sin_addr.s_addr = htonl(INADDR_ANY);
-  	sin.sin_port = htons(4242);
-  	if(bind(listener_socket, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
-    	syserr("bind");
-  	}
-
-  	if(listen(listener_socket, 5) == -1) syserr("listen");
-
-  	listener_socket_event = 
-    	event_new(base, listener_socket, EV_READ|EV_PERSIST, listener_socket_cb, (void *)base);
-  	if(!listener_socket_event) syserr("Error creating event for a listener socket.");
-
-  	if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
-
-
-    create_event_thread();
-    sock_udp = create_udp_socket();	
-
+    create_thread(&event_loop);
+    sock_udp = create_UDP_socket();	
     
-    create_reading_thread();
-    create_report_thread();
+    create_thread(&read_from_udp);
+    create_thread(&send_a_report);
 
     for (;;) {
         mix_data();

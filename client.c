@@ -70,7 +70,7 @@ int port_num = PORT;
 char server_name[NAME_SIZE];
 int retransfer_lim = RETRANSMIT_LIMIT;
 int sock_udp;
-struct sockaddr_in my_address;
+struct sockaddr_in6 my_address;
 socklen_t rcva_len = (socklen_t) sizeof(my_address);
 int last_sent = 0; /* nr z polecen */
 int ack = -1;
@@ -80,6 +80,17 @@ int clientid = -1; /* -1 to kleint niezidentyfikowany */
 struct event_base *base;
 struct bufferevent *bev;
 
+struct addrinfo addr_hints = {
+    .ai_flags = AI_V4MAPPED,  // ew.  AI_V4MAPPED | AI_ALL  
+    .ai_family = AF_UNSPEC,
+    .ai_socktype = SOCK_STREAM,
+    .ai_protocol = 0,
+    .ai_addrlen = 0,
+    .ai_addr = NULL,
+    .ai_canonname = NULL,
+    .ai_next = NULL
+};
+
 void get_parameters(int argc, char *argv[]) {
     
     int server_name_set = 0;
@@ -88,16 +99,17 @@ void get_parameters(int argc, char *argv[]) {
     {
         if (strcmp(argv[j], "-p") == 0)  
         {
-            port_num = atoi(argv[j]); // to jest w ogóle opcjonalne -> PSRAWDZ!!!
+            port_num = atoi(argv[j+1]); // to jest w ogóle opcjonalne -> PSRAWDZ!!!
         }
         else if (strcmp(argv[j], "-s") == 0)
         {    
-            strcpy(server_name, argv[j]);
+            strcpy(server_name, argv[j+1]);
             server_name_set = 1;
+            addr_hints.ai_family = AF_INET6;
         }
         else if (strcmp(argv[j], "-X") == 0)
         {
-            retransfer_lim = atoi(argv[j]);
+            retransfer_lim = atoi(argv[j+1]); // TODO: wywali blad, jesli X nie jest intem?
         }
     }
     //chwilowo
@@ -140,9 +152,19 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg)
 void a_read_cb(struct bufferevent *bev, void *arg)
 {  
     // TODO: kontrola, czy jest caly czas polaczenie, czyli pewnie jakiś timeout trzeba ustawic!
+    printf("A READ CB\n");
 
     if (clientid < 0) {
         read_CLIENT_datagram(bev, arg);
+    }
+
+    // TODO: do usuniecia to!
+    if (DEBUG) {
+        //send_CLIENT_datagram(15); //<- dziala, trzeba wydobyć client id tylko 
+        char bzdury[] = "nikt tego nie zda"; 
+        send_UPLOAD_datagram(bzdury, last_sent);
+        send_RETRANSMIT_datagram(last_sent);
+        //send_KEEEPALIVE_datagram();
     }
 
     char buf[BUF_SIZE+1];
@@ -152,15 +174,7 @@ void a_read_cb(struct bufferevent *bev, void *arg)
         if(r == -1) syserr("bufferevent_read");
         buf[r] = 0;
         printf("%s\n", buf);
-
-        // TODO: do usuniecia to!
-        if (DEBUG) {
-            //send_CLIENT_datagram(15); //<- dziala, trzeba wydobyć client id tylko 
-            char bzdury[] = "nikt tego nie zda"; 
-            send_UPLOAD_datagram(bzdury, last_sent);
-            send_RETRANSMIT_datagram(last_sent);
-            send_KEEEPALIVE_datagram();
-        }    
+    
     }
 }
 
@@ -203,13 +217,13 @@ void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
 
 
 int create_UDP_socket() {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (sock < 0) {
         syserr("socket");
     }
-    my_address.sin_family = AF_INET; 
-    //my_address.sin_addr.s_addr = htonl(INADDR_ANY); //to trzeba wziac z argumentow jakos!!!!!
-    my_address.sin_port = htons((uint16_t) port_num);
+    my_address.sin6_family = AF_INET6; 
+    my_address.sin6_addr = in6addr_any; 
+    my_address.sin6_port = htons((uint16_t) port_num);
     printf("Stworzyl gniazdo UDP\n");
     return sock;
 }  
@@ -288,24 +302,14 @@ void event_loop() {
     event_base_free(base);   
 }
 
-void create_event_thread() {
+void create_thread(void (*func)()) {
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
-    pthread_attr_init(&attr);-
+    pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
 
-    pthread_create(&r,&attr,event_loop,NULL);    
+    pthread_create(&r,&attr,*func,NULL);        
 }
-
-void create_keepalive_thread() {
-    pthread_t r; /*wynik*/
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);-
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
-
-    pthread_create(&r,&attr,send_KEEEPALIVE_datagram,NULL);    
-}
-
 
 void match_and_execute(char *datagram) {
     int nr;
@@ -327,61 +331,7 @@ void match_and_execute(char *datagram) {
         printf("Niewlasciwy format datagramu\n");
 }   
 
-
-int main (int argc, char *argv[]) {
-
-    if (DEBUG && argc == 1) {
-        printf("Client run with parameters: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
-    }
-
-    get_parameters(argc, argv);
-
-    base = event_base_new();
-    if(!base) syserr("event_base_new");
-    bev = bufferevent_socket_new(base, -1, BEV_OPT_CLOSE_ON_FREE);
-    if(!bev) syserr("bufferevent_socket_new");
-
-    /* Funkcje, które mają zostać wywołane po wystąpieniu zdarzenia, ustalamy w wywołaniu bufferevent_setcb() */
-    bufferevent_setcb(bev, a_read_cb, NULL, an_event_cb, (void *)bev);
-
-    struct addrinfo addr_hints = {
-        .ai_flags = 0,
-        .ai_family = AF_INET,
-        .ai_socktype = SOCK_STREAM,
-        .ai_protocol = 0,
-        .ai_addrlen = 0,
-        .ai_addr = NULL,
-        .ai_canonname = NULL,
-        .ai_next = NULL
-    };
-
-    struct addrinfo *addr;
-
-    // TODO: do poprawki cala ta komunikacja
-
-    if(getaddrinfo("localhost", "4242", &addr_hints, &addr)) syserr("getaddrinfo");
-
-    /* Pierwszym parametrem jest zdarzenie związane z buforem, następne dwa są takie 
-    jak w systemowym connect(). Jeśli przy tworzeniu zdarzenia nie podaliśmy gniazda,
-    to ta funkcja stworzy je dla nas. <- DYNAMICZNE TWORZENIE GNIAZD!*/
-    if(bufferevent_socket_connect(bev, addr->ai_addr, addr->ai_addrlen) == -1)
-        syserr("bufferevent_socket_connect");
-    freeaddrinfo(addr);
-
-    /* Samo podanie wskaźników do funkcji nie aktywuje ich, do tego używa się funkcji bufferevent_enable() */
-    if(bufferevent_enable(bev, EV_READ | EV_WRITE) == -1)
-        syserr("bufferevent_enable");
-  
-    sock_udp = create_UDP_socket();  
-
-    struct event *stdin_event =
-        event_new(base, 0, EV_READ|EV_PERSIST, stdin_cb, NULL); // 0 - standardwowe wejscie
-    if(!stdin_event) syserr("event_new");
-    if(event_add(stdin_event,NULL) == -1) syserr("event_add");
-
-    create_event_thread(); //przejmie czytanie z stdin oraz z TCP
-    create_keepalive_thread();
-
+void read_from_UDP() {
     // TODO: cala komunikacja jako odbiorca po UDP (powinien wystarczyc jeden watek)
     // czytanie w petli z UDP (jaka dlugosc? czy na pewno dobrze wczyta? czy moze nie zdazyc wczytac i np. beda juz dw w srodku? na pewno! co wtedy ?)
     // matchowanie komunikatow
@@ -411,6 +361,52 @@ int main (int argc, char *argv[]) {
             }
         } while (len > 0); 
     }
+}
+
+void set_event_TCP_stdin() {
+    base = event_base_new();
+    if(!base) syserr("event_base_new");
+    bev = bufferevent_socket_new(base, -1, BEV_OPT_CLOSE_ON_FREE);
+    if(!bev) syserr("bufferevent_socket_new");   
+
+
+    /* Funkcje, które mają zostać wywołane po wystąpieniu zdarzenia, ustalamy w wywołaniu bufferevent_setcb() */
+    bufferevent_setcb(bev, a_read_cb, NULL, an_event_cb, (void *)bev);
+
+    struct addrinfo *addr;
+
+    int port_size = (int) ((ceil(log10(port_num))+1)*sizeof(char));    
+    char str_port[port_size];
+    sprintf(str_port, "%d", port_num);
+
+    if(getaddrinfo(server_name, str_port, &addr_hints, &addr)) syserr("getaddrinfo");
+
+    if(bufferevent_socket_connect(bev, addr->ai_addr, addr->ai_addrlen) == -1)
+        syserr("bufferevent_socket_connect");
+    freeaddrinfo(addr);
+
+    /* Samo podanie wskaźników do funkcji nie aktywuje ich, do tego używa się funkcji bufferevent_enable() */
+    if(bufferevent_enable(bev, EV_READ | EV_WRITE) == -1)
+        syserr("bufferevent_enable");
+  
+    struct event *stdin_event =
+        event_new(base, 0, EV_READ|EV_PERSIST, stdin_cb, NULL); // 0 - standardwowe wejscie
+    if(!stdin_event) syserr("event_new");
+    if(event_add(stdin_event,NULL) == -1) syserr("event_add");    
+}
+
+int main (int argc, char *argv[]) {
+
+    if (DEBUG && argc == 1) {
+        printf("Client run with parameters: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
+    }
+
+    get_parameters(argc, argv);
+    set_event_TCP_stdin();
+    sock_udp = create_UDP_socket(); 
+    create_thread(&event_loop); //przejmie czytanie z stdin oraz z TCP
+    //create_thread(&send_KEEEPALIVE_datagram);
+    read_from_UDP();
 
     return 0;
 }
