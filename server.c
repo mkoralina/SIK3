@@ -365,8 +365,8 @@ void init_client_info(int fifo_queue_size) {
 	memset(client_info, 0, sizeof(client_info));
   	int i;
   	for(i = 0; i < MAX_CLIENTS; i++) {
-  		client_info[i].buf_FIFO = malloc(fifo_queue_size * sizeof(char*));
-        memset(client_info[i].buf_FIFO, 0, fifo_queue_size * sizeof(char*)); 
+  		client_info[i].buf_FIFO = malloc(fifo_queue_size * sizeof(char));
+        memset(client_info[i].buf_FIFO, 0, fifo_queue_size * sizeof(char)); 
   		client_info[i].min_FIFO = 0;
   		client_info[i].max_FIFO = 0;
   		if (fifo_high > 0)
@@ -467,12 +467,12 @@ void add_new_client(char * datagram, struct in_addr sin_addr, unsigned short sin
 }
 
 void * process_datagram(void *param) {
-  //datagram_address da = *(datagram_address*)param;
-  //char *datagram = da.datagram;
-  //struct in_addr sin_addr = da.sin_addr;
-  //unsigned short sin_port = da.sin_port;
+    datagram_address da = *(datagram_address*)param;
+    char *datagram = da.datagram;
+    struct in6_addr sin_addr = da.sin_addr;
+    unsigned short sin6_port = da.sin_port;
     
-   // match_and_execute(datagram, 2); //na sztywno do testow
+    match_and_execute(datagram, 2); //na sztywno do testow
 
 /* NA RAZIE, ZEBY LATWO BYLO DEBUGOWAC, BO TU SIE WYWALA
     if (DEBUG) printf("[TID:%d] process_datagram\n",syscall(SYS_gettid));
@@ -519,19 +519,25 @@ void create_thread(void * (*func)(void *)) {
 }
 
 void * read_from_udp(void * arg) {
+    // DEKLARACJA TUTAJ TYLKO DO TESTOW POKI NIE DZIALA MALLOC
+    char datagram[BUF_SIZE+1];
+    memset(datagram, 0, sizeof(datagram)); 
     ssize_t len;
     for (;;) {
         do {
-            //char datagram[BUF_SIZE+1];
-            int size = BUF_SIZE +1;
-            char *datagram;
+            
+            // DEKLARACJA MUSI BYC TUTAJ!! RAZEM Z MALLOCIEM!!! i MEMSETEM!!!
+            char datagram[BUF_SIZE+1];
+            //int size = BUF_SIZE +1;
+            //int size = 4;
+            //char *datagram;
 
-            datagram = (char *) malloc(sizeof(char) * size);
+            //datagram = malloc(size);
             //datagram = malloc(sizeof *datagram * (BUF_SIZE+1));
-            if (!datagram) {
-                syserr("malloc");
-            }
-            memset(datagram, 0, size); 
+            //if (!datagram) {
+            //    syserr("malloc");
+            //}
+            //memset(datagram, 0, size); 
             //memset(datagram, 0, sizeof(datagram)); 
 
             //struct datagram_address *da = malloc(sizeof(struct datagram_address));
@@ -556,7 +562,7 @@ void * read_from_udp(void * arg) {
                 da.sin_addr = client_udp.sin6_addr;
                 da.sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
                 create_UDP_thread(&da);
-                free(datagram);
+                //free(datagram); <- WYRZUCA BLAD!! munmap_chunk() (invalid pointer)
             }
         } while (len > 0); //dlugosc 0 jest ciezko uzyskac
         (void) printf("finished exchange\n");
