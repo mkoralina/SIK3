@@ -50,7 +50,6 @@ struct info {
     struct in6_addr addr_UDP;
     int min_FIFO;
     int max_FIFO;
-    //char **buf_FIFO; //TODO: zamiast tego, jedna tablica indeksowana id kleinta z wszytskimi buforami
     int buf_state;
     int nr; //ostatnio odebrany datagram
     int ack; //oczekiwany od klienta
@@ -68,15 +67,7 @@ struct connection_description clients[MAX_CLIENTS];
 
 char * buf_FIFO[MAX_CLIENTS];
 
-char * bufor;
-
-
-
-
-
-
-
-
+char * server_FIFO;
 
 //TODO: sprawdzenie poprawnosci podanych parametrow
 void get_parameters(int argc, char *argv[]) {
@@ -292,50 +283,52 @@ void send_ACK_datagram(int ack, int win, int clientid) {
     send_datagram(datagram, clientid);
 }
 
-void print_buf_FIFO(){
-    int i;
-    printf("print_buf_FIFO:");
-    for (i = 0; i < BUF_SIZE; i++) {
-        printf("%c",bufor[i]);
-    }
-    printf("\n");
-}
-
-
 void * send_a_report(void * arg) {
 	//wersja beta:
 	//create and print a report
     
     for (;;) {
+
+        char report[BUF_SIZE];
+        memset(report, 0, sizeof(report));
+        memcpy(report, "\n", 1);
+
     	printf("\n");
     	int i;
       	for(i = 0; i < MAX_CLIENTS; i++)
         	//jesli klient jest w systemie i jego kolejka aktywna
         	
-            //TODO
+            //TODO !!!
         	//TU TRZEBA ODKOMENTOWac!
         	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
-        	if(clients[i].ev) {	
+        	if(clients[i].ev) {
+                int offset = strlen(report);
+                int report_line = 200;
+                char tmp[report_line];
+                sprintf(tmp, "[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
+                         addr_to_str(&clients[i].address), 
+                         ntohs(clients[i].address.sin6_port),
+                         strlen(buf_FIFO[i]), 
+                         fifo_queue_size,
+                         client_info[i].min_FIFO,
+                         client_info[i].max_FIFO
+                         );
+                memcpy(&report[offset], tmp, strlen(tmp));
+
         		if (DEBUG) {
-                    printf("[klient:%d] ",i);
-            		printf("[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
-            			 addr_to_str(&clients[i].address), 
-            			 ntohs(clients[i].address.sin6_port),
-            			 strlen(buf_FIFO[i]), //TODO: powinno byc: *client_info[i].buf_FIFO, ale wtedy Naruszenie ochrony pamieci, i tak do zmiany ta struktura
-            			 fifo_queue_size,
-            			 client_info[i].min_FIFO,
-            			 client_info[i].max_FIFO
-            			 );
-                    //dla mnie:
-                    print_buf_FIFO(i);
-                    printf("buf_FIFO: %s\n",buf_FIFO[i]);
+                    printf("raport:\n %s\n",report);
                 }   
         	}
-    	//TODO
-        //normalnie powinno być:
-        //create a report	
-    	//multisend a report
-        //sleep(1);    
+
+        for(i = 0; i < MAX_CLIENTS; i++) {
+            if(clients[i].ev) {
+                int w;
+                if ((w = write(clients[i].sock, report, strlen(report))) == 0) {
+                    syserr("write: send a report\n");
+                }        
+            }    
+        }   
+
         struct timespec tim, tim2;
         tim.tv_sec = 10; //1s
         tim.tv_nsec = 0; //0
@@ -370,7 +363,7 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
     struct connection_description *cl = get_client_slot();
     if(!cl) {
         close(connection_socket);
-        printf("get_client_slot, too many clients"); // TODO: wypisuj 
+        printf("get_client_slot, too many clients"); // ew. TODO: wypisuj 
     }
   
     //kopiujemy adres kleinta do struktury
@@ -467,20 +460,7 @@ void match_and_execute(char *datagram, int clientid) {
     char data[BUF_SIZE];
     if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 2) {
         if (DEBUG) printf("[TID:%li] Zmatchowano do UPLOAD, nr = %d, dane = %s\n", syscall(SYS_gettid), nr, data);
-        
-        //int win = BUF_SIZE - strlen(bufor);
-        //int offset = BUF_SIZE - win;
-        //char * fifo = &((buf_FIFO[clientid])[offset]);
-        //sprintf(fifo,"%s",data);
 
-    /*    char tmp[strlen(data)];
-        sprintf(tmp, "%s", data);
-        char * ptr = memcpy(&bufor[offset], tmp, strlen(tmp));
-        //printf("*dest : %s\n",ptr);
-
-        printf("bufor: %s\n", bufor);
-        print_buf_FIFO();
-*/
         int win = fifo_queue_size - strlen(buf_FIFO[clientid]);
         int offset = fifo_queue_size - win;
         //char * fifo = &((buf_FIFO[clientid])[offset]);
@@ -507,15 +487,24 @@ void match_and_execute(char *datagram, int clientid) {
     }
     else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
         if (DEBUG) printf("[TID:%li] Zmachowano do RETRANSMIT\n",syscall(SYS_gettid));
+        //TODO:
+        //ostatnio wyslales datagram o numerze nr
+        //wiec o ile roznica miedzy tym numerem tutaj (konflikt oznaczen!)
+        //nie jest wieksza niz BUF_LEN
+        //to szukany datagram jest pod otrzymany_nr * 176*interval
+        //pobierz wlasciwy kawalek z server_FIFO
+        //skopiuj
+        //send_DATA_datagram(kawalej, clientid)
     }
     else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
         if (DEBUG) printf("[TID:%li] Zmatchowano do KEEPALIVE\n",syscall(SYS_gettid));
+        //TODO : udpate czasu ostatniej wiadomosci od klienta
     }
     else 
-        //syserr("Niewlasciwy format datagramu");
+        //syserr("Niewlasciwy format datagramu"); //ew. TODO: wypisuj inaczej
         if (DEBUG) printf("Niewlasciwy format datagramu\n");
 
-}    //TODO: do tego pamietaj o updateowaniu wszystkich wskaxnikow (ack, nr, win itp.)
+} 
     
 
 void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short sin_port) {
@@ -530,7 +519,7 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
 
         client_info[id].ack = 0;
         client_info[id].nr = -1;
-        //TODO atrapa! dane moga byc od innych klientow
+        //TODO atrapa! dane moga byc od innych klientow -> to juz bedzie dzialac, trzeba uzupelnic mikser i to wyrzucic
         char dane[] = "";
         send_DATA_datagram(dane, 0, client_info[id].ack, fifo_queue_size, id);
     }
@@ -627,12 +616,45 @@ void * read_from_udp(void * arg) {
 }
 
 
-void mix_data() {
-    //miskowanie danych
+void mix_and_send_data() {
+    struct mixer_input* inputs;
+    size_t num_of_clients = 0;
+    char * output;
+    size_t output_size;
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+        //jesli klient jest w systemie i jego kolejka aktywna
+        if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
+            //tworze strukture mixer_input dla kolejki
+            struct mixer_input *input = malloc(sizeof(struct mixer_input));
+            input->data = malloc(strlen(buf_FIFO[i]));
+            input->data = buf_FIFO[i];
+            input->len = strlen(buf_FIFO[i]);
+
+            //TODO
+            //dodaj &input do wektora inputs
+            num_of_clients++;
+        }
+    }
+    mixer(inputs, num_of_clients, (void*) output,                      
+            &output_size, interval);
+    send_data(output);
 }
 
-void send_data() {
-    //przesylanie do wszytskich klientow
+//wysylam dane do wszystkich klientow
+void send_data(char * data) {
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+        if(clients[i].ev) {
+            int win = fifo_queue_size - strlen(buf_FIFO[i]);
+            send_DATA_datagram(data, nr, client_info[i].ack, win, i);            
+        }    
+    } 
+    //TODO:
+    //zapisuje datagram
+    int beg = (nr % BUF_LEN) * (176 * interval);
+    //od tego miejsca trzeba zaczac zapis datagramu
+    nr++;  
 }
 
 void set_event_TCP() {
@@ -684,7 +706,7 @@ int main (int argc, char *argv[]) {
         syserr("Unable to change signal handler\n");
     }
 
-    bufor = malloc(sizeof(char) * BUF_SIZE);
+    server_FIFO = malloc(176 * interval * BUF_LEN); //wsadzamy co 176 * interval miejsc nadane datargramy
 
 	get_parameters(argc, argv);
 	init_client_info();
@@ -699,9 +721,31 @@ int main (int argc, char *argv[]) {
     create_thread(&send_a_report);
 
     for (;;) {
-        mix_data();
-        send_data();
+        mix_and_send_data();
     }   
+
+    //TODO: free wszystko co mallocowalas
        
 	return 0;
 }
+
+/* TODO:
+
+1) W przypadku wykrycia kłopotów z połączeniem przez serwer, powinien on zwolnić wszystkie zasoby związane z tym klientem
+
+-> sprawdz, czy sie cos tworzy zanim sie nawiaze polaczenie, jak tak, to zwolnij
+
+2) Jeśli serwer przez sekundę nie odbierze żadnego datagramu UDP, uznaje połączenie za kłopotliwe. 
+   Zezwala się jednakże na połączenia TCP bez przesyłania danych UDP, jeśli się chce zobaczyć tylko raporty.
+
+   -> wiec tutaj chyba bede musiala trzymac czas dla kazdego kleinta 
+   tablica czasow[MAX_CLIENTS]
+
+   i sprawdzac dla kazdego, czy juz nie bylo timeoutu
+
+   ale tez updateowac te czasy przy odbiorze keepalive (bo to wystarczy)
+
+UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW (w obu: server i client)
+
+
+*/

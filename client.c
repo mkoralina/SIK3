@@ -49,11 +49,15 @@
 #include <time.h>
 #include <math.h> 
 
+#ifndef max
+#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
+#endif
+
 //DO USUNIECIA!!!!!!
 #define PORT 14666
 
 
-#define BUF_SIZE 40 
+#define BUF_SIZE 64000 
 
  
 #define BUFFER_SIZE 1024
@@ -76,6 +80,10 @@ int last_sent = -1; /* nr z polecen */
 int ack = -1;
 int win = 0;
 int clientid = -1; /* -1 to kleint niezidentyfikowany */
+int nr_recv = -1;
+int nr_expected = 0;
+int nr_max_seen = -1;
+int connection_lost = 0;
 
 struct event_base *base;
 struct bufferevent *bev;
@@ -322,16 +330,25 @@ void match_and_execute(char *datagram) {
     memset(data, 0, BUF_SIZE);
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
     if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
-        printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data); 
-        if (!strlen(data)) {
-            printf("Przeslano pusty bufor\n");
-        } 
-        // TODO: i co? jak sie teraz tu zmieni ACK, to tam na gorze sie wlaczy petla do czytania z stdin?
-        //obsluz DATA
-        //wpisuejsz [dane] do kolejki zwiazanej z klientem
-        //if client_info[clientid].ack == nr
-        //int ack = client_info[clientid].ack
-        //send_ACK_datagram()
+        if (DEBUG) {
+            printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data); 
+            if (!strlen(data)) 
+                printf("Przeslano pusty bufor\n");
+        }
+        if (nr > nr_expected) {
+            if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {
+                send_RETRANSMIT_datagram(nr_expected);
+            }
+            else {
+                nr_expected = nr + 1;
+                //TODO: przyjmij dane
+            }
+        }
+        else if (nr == nr_expected) {
+            //TODO: przyjmij dane
+        }
+        nr_max_seen = max(nr, nr_max_seen);
+
     }
     else if (sscanf(datagram, "ACK %d %d", &ack, &win) == 2) {
         printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
@@ -413,6 +430,15 @@ void set_event_TCP_stdin() {
     if(event_add(stdin_event,NULL) == -1) syserr("event_add");    
 }
 
+void main_loop() {
+
+    sock_udp = create_UDP_socket(); 
+    set_event_TCP_stdin();    
+    create_thread(&event_loop); //przejmie czytanie z stdin oraz z TCP
+    //create_thread(&send_KEEEPALIVE_datagram);
+    read_from_UDP();
+}
+
 int main (int argc, char *argv[]) {
 
     if (DEBUG && argc == 1) {
@@ -420,13 +446,29 @@ int main (int argc, char *argv[]) {
     }
 
     get_parameters(argc, argv);
-    sock_udp = create_UDP_socket(); 
-    set_event_TCP_stdin();    
-    create_thread(&event_loop); //przejmie czytanie z stdin oraz z TCP
-    //create_thread(&send_KEEEPALIVE_datagram);
-    read_from_UDP();
+
+    main_loop();
 
     return 0;
 }
 
+/* 
 
+TODO:
+
+1) Retransmisje klient -> serwer
+   Jeśli klient otrzyma dwukotnie datagram DATA, bez potwierdzenia ostatnio wysłanego datagramu, powinien ponowić wysłanie ostatniego datagramu.
+
+    -> zliczanie
+
+2 )W przypadku wykrycia kłopotów z połączeniem przez klienta, powinien on zwolnić wszystkie zasoby oraz rozpocząć swoje działanie od początku, 
+automatycznie, nie częściej jednak niż 2x na sekundę.
+
+-> w miejscach, gdzie moze się wylozyc program na polaczeniu zamiast syserr, dawac perror czy jakos tam i 
+   connection_lost = 1; (albo nawet i bez tego) tylko zabijac wszytskie watki (jak?) , czekac pol minuty i odpalac main_loop()
+
+3) Jeśli klient przez sekundę nie otrzyma żadnych danych od serwera (choćby pustego datagramu DATA), uznaje połączenie za kłopotliwe.
+    -> jakis timeout w read_from_udp i zerowanie po kazdym otrzymanym datagramie
+
+
+*/
