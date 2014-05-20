@@ -4,14 +4,6 @@
 */
 
 
-/*
- Program uruchamiamy z dwoma parametrami: nazwa serwera i numer jego portu.
- Program spróbuje połączyć się z serwerem, po czym będzie od nas pobierał
- linie tekstu i wysyłał je do serwera.  Wpisanie BYE kończy pracę.
-*/
-
-//LIBEVENT
-
 #include <event2/event.h>
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
@@ -53,9 +45,7 @@
 #define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
 #endif
 
-//DO USUNIECIA!!!!!!
 #define PORT 14666
-
 
 #define BUF_SIZE 64000 
 
@@ -65,11 +55,8 @@
 
 #define RETRANSMIT_LIMIT 10 
 
-#define DEBUG 1 
+#define DEBUG 0 
 
-static const char bye_string[] = "BYE";
-
-//uzgodnic typy!
 int port_num = PORT;
 char server_name[NAME_SIZE];
 int retransfer_lim = RETRANSMIT_LIMIT;
@@ -80,7 +67,6 @@ int last_sent = -1; /* nr z polecen */
 int ack = -1;
 int win = 0;
 int clientid = -1; /* -1 to kleint niezidentyfikowany */
-int nr_recv = -1;
 int nr_expected = 0;
 int nr_max_seen = -1;
 int connection_lost = 0;
@@ -241,7 +227,7 @@ void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
     send_CLIENT_datagram(clientid);   
 }
 
-/* Funkcja czyta z TCP, wyrzuca raporty na stdout */
+/* Funkcja czyta z TCP, wyrzuca raporty na stder */
 void a_read_cb(struct bufferevent *bev, void *arg)
 {  
     // TODO: kontrola, czy jest caly czas polaczenie, czyli pewnie jakiś timeout trzeba ustawic!
@@ -250,28 +236,19 @@ void a_read_cb(struct bufferevent *bev, void *arg)
         read_CLIENT_datagram(bev, arg);
     }
 
-    // TODO: do usuniecia to!
-    if (DEBUG) {
-        //send_CLIENT_datagram(15); //<- dziala, trzeba wydobyć client id tylko 
-        //char bzdury[] = "nikt tego nie zda"; 
-        //send_UPLOAD_datagram(bzdury, last_sent);
-        //send_RETRANSMIT_datagram(last_sent);
-        //send_KEEEPALIVE_datagram();
-    }
-
     char buf[BUF_SIZE+1];
     while(evbuffer_get_length(bufferevent_get_input(bev))) {
 
         int r = bufferevent_read(bev, buf, BUF_SIZE);
         if(r == -1) syserr("bufferevent_read");
         buf[r] = 0;
-        printf("%s\n", buf);
+        fprintf(stderr, "%s", buf);
     
     }
 }
 
 void an_event_cb(struct bufferevent *bev, short what, void *arg) {
-    printf("An event cb\n");
+    if (DEBUG) printf("An event cb\n");
     if(what & BEV_EVENT_CONNECTED) {
         fprintf(stderr, "Connection made.\n");
         return;
@@ -289,9 +266,6 @@ void an_event_cb(struct bufferevent *bev, short what, void *arg) {
 }
 
 
-
-
-
 int create_UDP_socket() {
     int sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -300,15 +274,15 @@ int create_UDP_socket() {
     my_address.sin6_family = AF_INET6; 
     my_address.sin6_addr = in6addr_any; 
     my_address.sin6_port = htons((uint16_t) port_num);
-    printf("Stworzyl gniazdo UDP\n");
+    if (DEBUG) printf("Stworzyl gniazdo UDP\n");
     return sock;
 }  
 
 void * event_loop(void * arg) {
 
-    printf("Entering dispatch loop.\n");
+    if (DEBUG) printf("Entering dispatch loop.\n");
     if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
-    printf("Dispatch loop finished.\n");
+    if (DEBUG) printf("Dispatch loop finished.\n");
 
     bufferevent_free(bev);
     event_base_free(base);  
@@ -341,11 +315,14 @@ void match_and_execute(char *datagram) {
             }
             else {
                 nr_expected = nr + 1;
-                //TODO: przyjmij dane
+                //przyjmuje dane -> stdout
+                printf("%s",data);
             }
         }
         else if (nr == nr_expected) {
-            //TODO: przyjmij dane
+            //przyjmij dane
+            printf("Tu laduje\n");
+            printf("%s\n",data);
         }
         nr_max_seen = max(nr, nr_max_seen);
 

@@ -29,7 +29,7 @@ int fifo_queue_size = FIFO_SIZE;
 int fifo_low = FIFO_LOW_WATERMARK;
 int fifo_high;
 int buf_length = BUF_LEN;
-int interval = TX_INTERVAL;
+unsigned long interval = TX_INTERVAL;
 int nr; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
 int sock_udp;
 evutil_socket_t listener_socket;
@@ -520,7 +520,7 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         client_info[id].ack = 0;
         client_info[id].nr = -1;
         //TODO atrapa! dane moga byc od innych klientow -> to juz bedzie dzialac, trzeba uzupelnic mikser i to wyrzucic
-        char dane[] = "";
+        char dane[] = "101010100010101011111000010101010101";
         send_DATA_datagram(dane, 0, client_info[id].ack, fifo_queue_size, id);
     }
     else 
@@ -532,11 +532,8 @@ void * process_datagram(void *param) {
     char *datagram = da.datagram;
     struct in6_addr sin_addr = da.sin_addr;
     unsigned short sin_port = da.sin_port;
-    
-    //match_and_execute(datagram, 2); //na sztywno do testow
 
-
-    if (DEBUG) printf("[TID:%d] process_datagram, datagram: %s\n",syscall(SYS_gettid), datagram);
+    if (DEBUG) printf("[TID:%li] process_datagram, datagram: %s\n",syscall(SYS_gettid), datagram);
     int clientid = get_clientid(sin_addr, sin_port);
     if (clientid < 0) {
         //klienta nie ma w tabeli, jesli datagram jest typu CLIENT, trzeba go dodac 
@@ -585,7 +582,7 @@ void * read_from_udp(void * arg) {
     for (;;) {
         do {
             memset(datagram, 0, BUF_SIZE);                       
-
+            
             int flags = 0; 
             
             struct sockaddr_in6 client_udp;
@@ -593,6 +590,7 @@ void * read_from_udp(void * arg) {
 
             len = recvfrom(sock_udp, datagram, BUF_SIZE, flags,
                     (struct sockaddr *) &client_udp, &rcva_len); 
+
 
             if (len < 0)
                   syserr("error on datagram from client socket");
@@ -615,30 +613,53 @@ void * read_from_udp(void * arg) {
     }
 }
 
+void add_to_inputs(struct mixer_input* inputs, struct mixer_input input, size_t * position) {
+    inputs[*position] = input;
+    position++;    
+}
+
+void print_inputs(size_t * size) {
+    int i;
+    for (i = 0; i < size; i++) {
+        printf("inputs[i]\n");
+    }
+}
+
+struct mixer_input inputs[MAX_CLIENTS];
 
 void mix_and_send_data() {
-    struct mixer_input* inputs;
+    //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
     size_t num_of_clients = 0;
     char * output;
     size_t output_size;
     int i;
+    
     for(i = 0; i < MAX_CLIENTS; i++) {
         //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
             //tworze strukture mixer_input dla kolejki
+            /* chyba musze alokowac, zeby nie bylo tego co ostatnio.. ale z drugiej strony to jest jeden i ten sam watek..
             struct mixer_input *input = malloc(sizeof(struct mixer_input));
             input->data = malloc(strlen(buf_FIFO[i]));
             input->data = buf_FIFO[i];
             input->len = strlen(buf_FIFO[i]);
+            */
+            /*wiec chyba nie musze jednak*/
+            struct mixer_input input;
+            input.data = buf_FIFO[i];
+            input.len = strlen(buf_FIFO);
+            inputs[i] = input;
 
-            //TODO
-            //dodaj &input do wektora inputs
-            num_of_clients++;
+        
+            //add_to_inputs(inputs, *input, &num_of_clients);
         }
     }
-    mixer(inputs, num_of_clients, (void*) output,                      
-            &output_size, interval);
-    send_data(output);
+    //print_inputs(inputs, num_of_clients);
+    //mixer(inputs, num_of_clients, (void*) output,                      
+    //        &output_size, interval);
+    
+
+    //send_data(output);
 }
 
 //wysylam dane do wszystkich klientow
@@ -746,6 +767,10 @@ int main (int argc, char *argv[]) {
    ale tez updateowac te czasy przy odbiorze keepalive (bo to wystarczy)
 
 UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW (w obu: server i client)
+
+3) ucinanie adresow IPv4 do swojej dlugosci z IPv6
+
+4) ustawianie wartosci kolejek dla klientow -> sprawdzanie
 
 
 */
