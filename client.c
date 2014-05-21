@@ -54,6 +54,7 @@
 #define NAME_SIZE 1000 //ile to ma byc?
 
 #define RETRANSMIT_LIMIT 10 
+#define DATAGRAM_SIZE 10000 
 
 #define DEBUG 1 
 
@@ -70,6 +71,9 @@ int clientid = -1; /* -1 to kleint niezidentyfikowany */
 int nr_expected = -1;
 int nr_max_seen = -1;
 int connection_lost = 0;
+char * last_datagram;
+int DATAs_since_last_datagram = 0;
+
 
 struct event_base *base;
 struct bufferevent *bev;
@@ -139,6 +143,7 @@ void send_CLIENT_datagram(uint32_t id) {
 
     sprintf(datagram, "%s %s\n", type, clientid); 
     send_datagram(datagram);  
+    free(datagram);
 }
 
 void send_UPLOAD_datagram(char *data, int no) {
@@ -153,7 +158,12 @@ void send_UPLOAD_datagram(char *data, int no) {
     char* datagram = malloc(strlen(type) + strlen(str) + 2 + strlen(data));
 
     sprintf(datagram, "%s %s\n%s", type, str, data);
-    send_datagram(datagram);    
+    send_datagram(datagram);
+
+    memset(last_datagram, 0,strlen(last_datagram));
+    memcpy(last_datagram, data, strlen(data));
+    
+    free(datagram);    
 }
 
 void send_RETRANSMIT_datagram(int no) {
@@ -169,6 +179,7 @@ void send_RETRANSMIT_datagram(int no) {
 
     sprintf(datagram, "%s %s\n", type, str);
     send_datagram(datagram);
+    free(datagram);
 }
 
 void * send_KEEEPALIVE_datagram(void * arg) {
@@ -304,6 +315,12 @@ void match_and_execute(char *datagram) {
     memset(data, 0, BUF_SIZE);
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
     if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
+        DATAs_since_last_datagram++;
+        if (DATAs_since_last_datagram > 1 && last_sent >= 0) {
+            if (DEBUG) printf("RETRANSMISJA KLIENT -> SERWER\n");
+            send_UPLOAD_datagram(last_datagram, last_sent);
+            DATAs_since_last_datagram = 0;
+        }
         if (DEBUG) {
             printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data); 
             //if (!strlen(data)) 
@@ -315,7 +332,7 @@ void match_and_execute(char *datagram) {
             printf("%s\n",data);
         }
         else if (nr > nr_expected) {
-            if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {
+            if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {                
                 send_RETRANSMIT_datagram(nr_expected);
             }
             else {
@@ -426,10 +443,13 @@ int main (int argc, char *argv[]) {
         printf("Client run with parameters: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
     }
 
+    last_datagram = malloc(DATAGRAM_SIZE);
+
     get_parameters(argc, argv);
 
     main_loop();
 
+    free(last_datagram);
     return 0;
 }
 
