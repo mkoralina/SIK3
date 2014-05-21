@@ -354,14 +354,14 @@ void read_from_UDP() {
     // obsluga komunikatow
     ssize_t len;
     char datagram[BUF_SIZE+1];
-    memset(datagram, 0, sizeof(datagram)); 
+    
     int flags = 0; 
     struct sockaddr_in6 server_udp;
     socklen_t rcva_len = (ssize_t) sizeof(server_udp);
             
     for (;;) {
         do {         
-            
+            memset(datagram, 0, sizeof(datagram)); 
             len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
                     (struct sockaddr *) &server_udp, &rcva_len); 
 

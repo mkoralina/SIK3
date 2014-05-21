@@ -40,6 +40,7 @@ struct event *listener_socket_event;
 struct connection_description {
     int id; 
     struct sockaddr_in6 address; //IPv4 + IPv6
+    char * str_address;
     evutil_socket_t sock;
     struct event *ev;
 };
@@ -257,7 +258,8 @@ void send_datagram(char *datagram, int clientid) {
     
     if (snd_len != strlen(datagram)) {
             syserr("partial / failed sendto");
-    }        
+    }   
+    if (DEBUG) printf("Wyslalo\n");     
 }
 
 void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
@@ -285,6 +287,7 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
   	//printf("size of datagram = %d\n",sizeof(datagram));
   	if (w != strlen(datagram)) syserr("nie przeszlo\n"); 
   	if (DEBUG) printf("przeszlo\n");
+    free(datagram);
 }
 
 //nieprzetestowane
@@ -315,6 +318,7 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid) {
 
     sprintf(datagram, "%s %s %s %s\n%s", type, str_no, str_ack, str_win, data);
     send_datagram(datagram, clientid);
+    free(datagram);
 }
 
 void send_ACK_datagram(int ack, int win, int clientid) {
@@ -337,6 +341,7 @@ void send_ACK_datagram(int ack, int win, int clientid) {
 
     sprintf(datagram, "%s %s %s\n", type, str_ack, str_win);
     send_datagram(datagram, clientid);
+    free(datagram);
 }
 
 void * send_a_report(void * arg) {
@@ -362,7 +367,7 @@ void * send_a_report(void * arg) {
                 int report_line = 200;
                 char tmp[report_line];
                 sprintf(tmp, "[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
-                         addr_to_str(&clients[i].address), 
+                         clients[i].str_address, 
                          ntohs(clients[i].address.sin6_port),
                          strlen(buf_FIFO[i]), 
                          fifo_queue_size,
@@ -425,6 +430,7 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
     //kopiujemy adres kleinta do struktury
     memcpy(&(cl->address), &sin, sizeof(struct sockaddr_in6));
     cl->sock = connection_socket;
+    cl->str_address = addr_to_str(&cl->address);
     //dodaj info o kliencie 
     client_info[cl->id].port_TCP = ntohs(sin.sin6_port);
 
@@ -592,7 +598,10 @@ void * process_datagram(void *param) {
     }
     else {
         match_and_execute(datagram, clientid);
-    }   
+    } 
+    free(((datagram_address*)param)->datagram);
+    free(param);
+    //free(&da);  
     return 0;    
 }
 
@@ -657,11 +666,13 @@ void * read_from_udp(void * arg) {
                 da->sin_addr = client_udp.sin6_addr;
                 da->sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
                 create_UDP_thread(da);
-                //free(datagram); <- WYRZUCA BLAD!! munmap_chunk() (invalid pointer)
+                
+
             }
         } while (len > 0); //dlugosc 0 jest ciezko uzyskac
         if (DEBUG) (void) printf("finished exchange\n");
     }
+    free(datagram);
 }
 
 void add_to_inputs(struct mixer_input* inputs, struct mixer_input input, size_t * position) {
@@ -689,10 +700,16 @@ void mix_and_send() {
     int target_size = 176 * interval;
 
     size_t num_of_clients = 0;
+    
+
     char * output = malloc(target_size);
-    memset(output, 0, sizeof(output));
+
+    //printf("size od output: %zu\n", sizeof(output)); //-> 8
+    memset(output, 0, target_size);
+
 
     void * output_buf = (void *) output;
+    //memset(output_buf, 0, sizeof(output_buf));
 
     size_t output_size;
     int i;
@@ -703,8 +720,14 @@ void mix_and_send() {
         //if(clients[i].ev && client_info[i].buf_state == ACTIVE){
             struct mixer_input input;
             input.data = malloc(176*interval);
+
+            printf("Po mallocu input.data %d : %p\n",i,input.data);
+            memset(input.data, 0, 176*interval);
             memcpy(&input.data[0], buf_FIFO[i], strlen(buf_FIFO[i]));
             
+            printf("buf_FIFO[%d]: %s\n",i,buf_FIFO[i]);
+            printf("input.data: %s\n", input.data);
+
 
             //po skopiowaniu zawartosci do input moge update'owac bufor
             int offset = min(strlen(buf_FIFO[i]),target_size);
@@ -731,14 +754,15 @@ void mix_and_send() {
 
     if (num_of_clients) 
         mixer(inputs, num_of_clients, output,                      
-            &output_size, interval);
-    
+            &output_size, interval);   
 
 
-    //printf("strlen(output): %d\n", strlen(output));
+    //printf("strlen(output): %d\n", strlen(output));    
 
     output = (char *) output_buf;
     //if (num_of_clients) print_inputs(inputs, &num_of_clients);
+    printf("output_buf: %s\n",output_buf);
+    printf("output: %s\n",output);
 
 /*
     if (num_of_clients) {
@@ -747,14 +771,19 @@ void mix_and_send() {
     }
 */
     send_data(output);
-    //zwolnij zasoby
-    free(output);
+    //zwolnij zasoby 
+    free(output); //ok, sprawdzone
+
     for (i = 0; i < num_of_clients; i++) {
+        if (DEBUG) printf("Chce zrobic free na kliencie %d\n",i);
+        printf("We free inputs[%d].data: %p\n",i,inputs[i].data);
         free(inputs[i].data);
     }
+
+    if (DEBUG) printf("Zrobiles free, ide spac\n");
     //idz spac na interval ms
     struct timespec tim, tim2;
-    tim.tv_sec = 10; //0s
+    tim.tv_sec = 5; //0s
     //tim.tv_nsec = interval * 1000000; //interval ms
     tim.tv_nsec = 0;
     nanosleep(&tim, &tim2); 
@@ -763,6 +792,7 @@ void mix_and_send() {
 
 //wysylam dane do wszystkich klientow
 void send_data(char * data) {
+    if (DEBUG) printf("send_data\n");
     int i;
     int anyone_inside = 0;
     //przesylam do wszytskich klientow w systemie
@@ -782,7 +812,7 @@ void send_data(char * data) {
         memcpy(&server_FIFO[0], data, 176 * interval); // powinno byc rowne sizeof(data) i w sumie strlen(data) tez
         nr++;
     }
-      
+    if (DEBUG) printf("Wychodzi z send_data\n");  
 }
 
 void set_event_TCP() {

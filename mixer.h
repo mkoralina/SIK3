@@ -88,7 +88,8 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     */
 
     /* ATRAPA: jako output wypluwa input 1. klienta, nic nie miksuje */
-
+    //printf("size od output_buf: %zu\n", sizeof(output_buf));
+    //memset(output_buf, 0, sizeof(output_buf));
     memcpy(&output_buf[0], inputs[0].data, strlen(inputs[0].data));
     *output_size = strlen(output_buf);
 

@@ -24,3 +24,7 @@
 - free wszytskie malloci!
 
 - podmienić sleepy na własciwe
+
+MIN, MAX w raportach!
+
+zwalnianie pamięci po wątkach
