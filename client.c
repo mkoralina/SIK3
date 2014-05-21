@@ -20,6 +20,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <pthread.h> 
+#include <signal.h> 
 
 
 // snprintf
@@ -56,6 +57,9 @@
 #define RETRANSMIT_LIMIT 10 
 #define DATAGRAM_SIZE 10000 
 
+#define TRUE 1
+#define FALSE 0
+
 #define DEBUG 1 
 
 int port_num = PORT;
@@ -73,6 +77,11 @@ int nr_max_seen = -1;
 int connection_lost = 0;
 char * last_datagram;
 int DATAs_since_last_datagram = 0;
+int finish = 0;
+
+pthread_t keepalive_thread;
+pthread_t event_thread;
+pthread_t main_thread;
 
 
 struct event_base *base;
@@ -129,7 +138,9 @@ void send_datagram(char *datagram) {
             (struct sockaddr *) &my_address, rcva_len);    
     
     if (snd_len != strlen(datagram)) {
-            syserr("partial / failed sendto");
+        perror("partial / failed sendto");
+        free(datagram);
+        reboot();
     }        
 }
 
@@ -183,14 +194,96 @@ void send_RETRANSMIT_datagram(int no) {
 }
 
 void * send_KEEEPALIVE_datagram(void * arg) {
-    for (;;) {
+    keepalive_thread = pthread_self();
+    while (!finish) {
         struct timespec tim, tim2;
         tim.tv_sec = 0; //0s
         tim.tv_nsec = 100000000; //0.1s
         nanosleep(&tim, &tim2);    
         char *datagram = "KEEPALIVE\n";
         send_datagram(datagram);
-    }    
+    }
+    return 0;    
+}
+
+
+void reboot() {
+    // TODO: zwolnij zasoby
+    // TODO: zabij wszytskie inne watki 
+    finish = TRUE; // TODO: podorzucac do petli we wszytskich threadach zwalnianie zasobow (co z moimi? gdzies mnie blad wyorzucic -> zwolnic przed rebootem!!!)
+    // TODO i niech sie zakonczą returnem czy czymś i tyle
+    //wait 30s
+    struct timespec tim, tim2;
+    tim.tv_sec = 30; //30s
+    tim.tv_nsec = 0; 
+    nanosleep(&tim, &tim2); 
+    //reopen
+    main_loop();
+}
+
+void join_threads() {
+    void* ret = NULL;
+    if (pthread_self() == main_thread) {
+        if ((pthread_join(keepalive_thread, &ret)) != 0) {
+            syserr("pthread_join");
+        }
+        if ((pthread_join(event_thread, &ret)) != 0) {
+            syserr("pthread_join");
+        }    
+    } 
+    else if (pthread_self() == event_thread) {
+        if ((pthread_join(keepalive_thread, &ret)) != 0) {
+            syserr("pthread_join");
+        }
+        if ((pthread_join(main_thread, &ret)) != 0) {
+            syserr("pthread_join");
+        }    
+    }
+    else if (pthread_self() == keepalive_thread) {
+        if ((pthread_join(main_thread, &ret)) != 0) {
+            syserr("pthread_join");
+        }
+        if ((pthread_join(event_thread, &ret)) != 0) {
+            syserr("pthread_join");
+        }    
+    }   
+}
+
+
+/* Obsługa sygnału kończenia */
+static void catch_int (int sig) {
+    /* zwalniam zasoby */
+    //ogarnic te watki i zwalnianie pamieci po mallocu
+    finish = TRUE;
+    if (DEBUG) {
+        printf("Exit() due to Ctrl+C\n");
+    }
+    /* Assuming 2.6 posix threads, and the OS sending SIGTERM or SIGHUP,
+     the signal is sent to process, which is received by and handled by root thread*/
+    if (pthread_self() == main_thread) {
+        printf("Tak, są rowne\n");
+    }
+    else {
+        printf("Nie, nie sa rowne\n");
+    }
+
+    void* ret = NULL;
+    if ((pthread_join(event_thread, &ret)) != 0) {
+        syserr("pthread_join2");
+    }
+    else {
+        printf("event joined\n");
+    }
+
+    if ((pthread_join(keepalive_thread, &ret)) != 0) {
+        syserr("pthread_join1");
+    }
+    else {
+        printf("keepalive\n");
+    }
+
+    printf("doszło?\n");
+    exit(EXIT_SUCCESS);
 }
 
 void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
@@ -202,12 +295,15 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
     // TODO: doczytaj jeszcze jak to jest z tymi numerami
     if (ack > last_sent && win > 0) {
         int r = read(descriptor, buf, win);
-        if(r < 0) syserr("w evencie: read (from stdin)");
+        if(r < 0) {
+            perror("w evencie: read (from stdin)");
+            reboot();
+        }    
         if(r == 0) {
-            fprintf(stderr, "stdin closed. Exiting event loop.\n");
+            perror("stdin closed. Exiting event loop.");
             if(event_base_loopbreak(base) == -1) 
                 syserr("event_base_loopbreak");
-            return;
+            reboot();
         }
 
         last_sent++;
@@ -289,7 +385,8 @@ int create_UDP_socket() {
     return sock;
 }  
 
-void * event_loop(void * arg) {
+void * event_loop(void * arg) { //TODO: ustawic, zeby w tej petli sie jakos to konczylo, bo nie exituje nigdy1 i te free tam dopisac!
+    event_thread = pthread_self();
 
     if (DEBUG) printf("Entering dispatch loop.\n");
     if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
@@ -304,7 +401,6 @@ void create_thread(void * (*func)(void *)) {
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
 
     pthread_create(&r,&attr,*func,NULL);        
 }
@@ -360,7 +456,6 @@ void match_and_execute(char *datagram) {
 
 char * addr_to_str(struct sockaddr_in6 *addr) {
     char * str = malloc(sizeof(char) * INET6_ADDRSTRLEN);
-    //char str[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
     //if (DEBUG) printf("adres klienta: %s\n", str);
     return str;
@@ -378,7 +473,7 @@ void read_from_UDP() {
     struct sockaddr_in6 server_udp;
     socklen_t rcva_len = (ssize_t) sizeof(server_udp);
             
-    for (;;) {
+    while (!finish) {
         do {         
             memset(datagram, 0, sizeof(datagram)); 
             len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
@@ -431,38 +526,36 @@ void set_event_TCP_stdin() {
 }
 
 void main_loop() {
+    main_thread = pthread_self();
 
+    last_datagram = malloc(DATAGRAM_SIZE);
     sock_udp = create_UDP_socket(); 
     set_event_TCP_stdin();    
     create_thread(&event_loop); //przejmie czytanie z stdin oraz z TCP
-    //create_thread(&send_KEEEPALIVE_datagram);
+    create_thread(&send_KEEEPALIVE_datagram);
     read_from_UDP();
+    free(last_datagram); // TODO: do tego nie powinien dojsc, wrzucic to do zwalniania zasobow
 }
 
 int main (int argc, char *argv[]) {
 
     if (DEBUG && argc == 1) {
         printf("Client run with parameters: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
+    }    
+
+    /* Ctrl-C konczy porogram */
+    if (signal(SIGINT, catch_int) == SIG_ERR) {
+        syserr("Unable to change signal handler\n");
     }
 
-    last_datagram = malloc(DATAGRAM_SIZE);
-
     get_parameters(argc, argv);
-
-    main_loop();
-
-    free(last_datagram);
+    main_loop();    
     return 0;
 }
 
 /* 
 
 TODO:
-
-1) Retransmisje klient -> serwer
-   Jeśli klient otrzyma dwukotnie datagram DATA, bez potwierdzenia ostatnio wysłanego datagramu, powinien ponowić wysłanie ostatniego datagramu.
-
-    -> zliczanie
 
 2 )W przypadku wykrycia kłopotów z połączeniem przez klienta, powinien on zwolnić wszystkie zasoby oraz rozpocząć swoje działanie od początku, 
 automatycznie, nie częściej jednak niż 2x na sekundę.

@@ -31,11 +31,12 @@ int fifo_low = FIFO_LOW_WATERMARK;
 int fifo_high;
 int buf_length = BUF_LEN;
 unsigned long interval = TX_INTERVAL;
-unsigned long long nr = 0; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
+unsigned long long last_nr = 0; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
 int sock_udp;
 evutil_socket_t listener_socket;
 struct event_base *base;
 struct event *listener_socket_event;
+
 
 struct connection_description {
     int id; 
@@ -63,60 +64,6 @@ typedef struct datagram_address {
     unsigned short sin_port;
 } datagram_address;
 
-/*
-typedef struct circular_buffer
-{
-     *buffer;     // data buffer
-    void *buffer_end; // end of data buffer
-    size_t capacity;  // maximum number of items in the buffer
-    size_t count;     // number of items in the buffer
-    size_t sz;        // size of each item in the buffer
-    void *head;       // pointer to head
-    void *tail;       // pointer to tail
-} circular_buffer;
-
-void cb_init(circular_buffer *cb, size_t capacity, size_t sz)
-{
-    cb->buffer = malloc(capacity * sz);
-    if(cb->buffer == NULL)
-        // handle error
-    cb->buffer_end = (char *)cb->buffer + capacity * sz;
-    cb->capacity = capacity;
-    cb->count = 0;
-    cb->sz = sz;
-    cb->head = cb->buffer;
-    cb->tail = cb->buffer;
-}
-
-void cb_free(circular_buffer *cb)
-{
-    free(cb->buffer);
-    // clear out other fields too, just to be safe
-}
-
-void cb_push_back(circular_buffer *cb, const void *item)
-{
-    if(cb->count == cb->capacity)
-        // TODO: handle error
-        printf("Bufor przepeniony\n");
-    memcpy(cb->head, item, cb->sz);
-    cb->head = (char*)cb->head + cb->sz;
-    if(cb->head == cb->buffer_end)
-        cb->head = cb->buffer;
-    cb->count++;
-}
-
-void cb_pop_front(circular_buffer *cb, void *item)
-{
-    if(cb->count == 0)
-        // handle error
-    memcpy(item, cb->tail, cb->sz);
-    cb->tail = (char*)cb->tail + cb->sz;
-    if(cb->tail == cb->buffer_end)
-        cb->tail = cb->buffer;
-    cb->count--;
-}
-*/
 struct info client_info[MAX_CLIENTS];
 
 struct connection_description clients[MAX_CLIENTS];
@@ -542,15 +489,58 @@ void match_and_execute(char *datagram, int clientid) {
         send_ACK_datagram(client_info[clientid].ack, win, clientid);
     }
     else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
+        int win = fifo_queue_size - strlen(buf_FIFO[clientid]);
         if (DEBUG) printf("[TID:%li] Zmachowano do RETRANSMIT\n",syscall(SYS_gettid));
-        //TODO:
-        //ostatnio wyslales datagram o numerze nr
-        //wiec o ile roznica miedzy tym numerem tutaj (konflikt oznaczen!)
-        //nie jest wieksza niz BUF_LEN
-        //to szukany datagram jest pod otrzymany_nr * 176*interval
-        //pobierz wlasciwy kawalek z server_FIFO
-        //skopiuj
-        //send_DATA_datagram(kawalej, clientid)
+        if (last_nr - nr >= BUF_LEN) {
+            //przesylam cala tablice
+            int beg = (last_nr + 1) % BUF_LEN;
+            int i;
+            //za last_sent w tablicy (najwczesniejsze)
+            for (i = beg; i < BUF_LEN; i++) {
+                char * datagram = malloc(176 * interval);
+                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                send_DATA_datagram(datagram, (last_nr - beg + 1 + i - BUF_LEN) ,client_info[clientid].ack, win,clientid);
+                free(datagram);
+            }
+            //od poczatku
+            int end = last_nr % BUF_LEN;
+            for (i = 0; i <= end; i++) {
+                char * datagram = malloc(176 * interval);
+                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                send_DATA_datagram(datagram, (last_nr - end + i) ,client_info[clientid].ack, win,clientid);
+                free(datagram);
+            }
+        }
+        //nr lezy w tablicy przed last_nr
+        else if ((last_nr % BUF_LEN) > (nr % BUF_LEN)) {
+            int i;
+            for (i = nr; i < last_nr ; i++) {
+                char * datagram = malloc(176 * interval);
+                memcpy(datagram, &server_FIFO[(i % BUF_LEN) * 176*interval], 176 * interval);
+                send_DATA_datagram(datagram, i, client_info[clientid].ack, win,clientid);
+                free(datagram);
+            }        
+        }
+        else if ((nr % BUF_LEN) > (last_nr % BUF_LEN)) {
+            //petla od nr do konca
+            int i;
+            int beg = nr % BUF_LEN;
+            for (i = beg; i < BUF_LEN; i++) {
+                char * datagram = malloc(176 * interval);
+                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                send_DATA_datagram(datagram, (nr - beg + i) ,client_info[clientid].ack, win, clientid);
+                free(datagram);
+            }
+            //petla od 0 do last
+            int end = last_nr % BUF_LEN;
+            for (i = 0; i <= end; i++) {
+                char * datagram = malloc(176 * interval);
+                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                send_DATA_datagram(datagram, (last_nr - end + i) ,client_info[clientid].ack, win,clientid);
+                free(datagram);
+            }            
+        }
+        
     }
     else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
         if (DEBUG) printf("[TID:%li] Zmatchowano do KEEPALIVE\n",syscall(SYS_gettid));
@@ -576,9 +566,6 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         client_info[id].ack = 0;
         client_info[id].nr = -1;
         activated[id] = 1;
-        //TODO atrapa! dane moga byc od innych klientow -> to juz bedzie dzialac, trzeba uzupelnic mikser i to wyrzucic
-        //char dane[] = "101010100010101011111000010101010101";
-        //send_DATA_datagram(dane, 0, client_info[id].ack, fifo_queue_size, id);
     }
     else 
         syserr("Bledny datagram poczatkowy\n");
@@ -738,38 +725,16 @@ void mix_and_send() {
             add_to_inputs(inputs, input, &num_of_clients);
         }
     }
-    //if (num_of_clients) print_inputs(inputs, &num_of_clients);
-
-    //printf("POINTERS:\n");
-    //printf("output: %p\n",output);
-    //printf("inputs[1].data: %p\n",inputs[1].data);
-    //printf("buf_FIFO[1]: %p\n",buf_FIFO[1]);
-    //printf("inputs[0].data: %p\n",inputs[0].data);
-    //printf("buf_FIFO[0]: %p\n",buf_FIFO[0]);
-
-    //printf("PRZED:\n");
-    //if (num_of_clients) print_inputs(inputs, &num_of_clients);    
-    //if (num_of_clients == 2) 
-    
+  
 
     if (num_of_clients) 
         mixer(inputs, num_of_clients, output,                      
             &output_size, interval);   
 
-
-    //printf("strlen(output): %d\n", strlen(output));    
-
     output = (char *) output_buf;
-    //if (num_of_clients) print_inputs(inputs, &num_of_clients);
     printf("output_buf: %s\n",output_buf);
     printf("output: %s\n",output);
 
-/*
-    if (num_of_clients) {
-        printf("output: %s, output_size: %zu\n", output, output_size);
-        printf("buf_FIFO[0]: %s\n",buf_FIFO[0]);
-    }
-*/
     send_data(output);
     //zwolnij zasoby 
     free(output); //ok, sprawdzone
@@ -781,7 +746,7 @@ void mix_and_send() {
     }
 
     if (DEBUG) printf("Zrobiles free, ide spac\n");
-    //idz spac na interval ms
+    //idz spac na interval ms TODO: zmienic zakres
     struct timespec tim, tim2;
     tim.tv_sec = 5; //0s
     //tim.tv_nsec = interval * 1000000; //interval ms
@@ -800,7 +765,7 @@ void send_data(char * data) {
         if(clients[i].ev && activated[i]) {
             int win = fifo_queue_size - strlen(buf_FIFO[i]);
             printf("Z send_data:\n");
-            send_DATA_datagram(data, nr, client_info[i].ack, win, i);   
+            send_DATA_datagram(data, last_nr, client_info[i].ack, win, i);   
             anyone_inside = 1;         
         }    
     } 
@@ -808,9 +773,11 @@ void send_data(char * data) {
     if (anyone_inside) {
         //zapisuje datagram do kolejki FIFO serwera
         //wyszukuje koniec kolejki:
-        int beg = (nr % BUF_LEN) * (176 * interval);
-        memcpy(&server_FIFO[0], data, 176 * interval); // powinno byc rowne sizeof(data) i w sumie strlen(data) tez
-        nr++;
+        int beg = (last_nr % BUF_LEN) * (176 * interval);
+        memcpy(&server_FIFO[beg], data, 176 * interval); // powinno byc rowne sizeof(data) i w sumie strlen(data) tez
+        if (DEBUG) printf("server_FIFO: %s\n",&server_FIFO[beg] ); //dobrze, zapisuje sie gdzie trzeba, 
+        //zwykle server_FIFO nie pokazuje calosci, bo zatrzymuje sie na pierwszym \0
+        last_nr++;
     }
     if (DEBUG) printf("Wychodzi z send_data\n");  
 }
@@ -918,5 +885,10 @@ UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW (w obu: server i client
 
 4) ustawianie wartosci kolejek dla klientow -> sprawdzanie
 
+5) poprawić stałe wszytskie
+
+6) czy na pewno inty mają być w wielu miejscah, a nie long long inty na przyklad
+
+7) poprawic styl retransmisji
 
 */

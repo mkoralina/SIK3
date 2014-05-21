@@ -28,3 +28,6 @@
 MIN, MAX w raportach!
 
 zwalnianie pamięci po wątkach
+
+
+retransmisja serwer -> kleint !!!!
