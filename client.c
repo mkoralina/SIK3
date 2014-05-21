@@ -316,7 +316,7 @@ void match_and_execute(char *datagram) {
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
     if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
         DATAs_since_last_datagram++;
-        if (DATAs_since_last_datagram > 1 && last_sent >= 0) {
+        if (DATAs_since_last_datagram > 1 && last_sent >= 0 && last_sent == ack) {
             if (DEBUG) printf("RETRANSMISJA KLIENT -> SERWER\n");
             send_UPLOAD_datagram(last_datagram, last_sent);
             DATAs_since_last_datagram = 0;
@@ -349,6 +349,8 @@ void match_and_execute(char *datagram) {
 
     }
     else if (sscanf(datagram, "ACK %d %d", &ack, &win) == 2) {
+        if (ack == last_sent + 1) 
+            DATAs_since_last_datagram = 0;
         printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
     }
     else 
