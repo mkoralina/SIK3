@@ -1,0 +1,26 @@
+- trzeba kopiować fragmenty pamieci,a  nie przypisywać do wskaźnikow, bo wtedy zmieniają sie wartosci wskaznika, wraca nie to co trzeba
+
+- przesylac skopiowana tablice, a nie faktycznie buf_FIFO, bo co jak ktoś zmieni w tym samym czasie?
+
+- orzeysłąc do 178*interval - tyle kopiować
+
+ - w mikserze zrobic te petle, ktora chcialas dopisujaca zera
+
+- potem petla dodajaca
+
+- ustawiac ile skosumowano, czyli tak naprawde min(176*, strlen)
+
+- to kasowac w oryginalnym buf_FIFO
+
+- circular buffer dla buf_FIFO -> niby ok, ale trzeba dzielic wtedy dane na dwie partie, jeśli przechodzą przez koniec bufora
+
+- i dla server_FIFO też moze byc tak naprawde.. (chociaż tutaj moze byc lepiej to kopiowanie, bo wtedy łatwiej keep track obecnych datagramow (bo to po pozycjach bedzie widac fajnei, gdzie co jest, a tak to trzeba bedzie .. chociaz też beda te stale, tylko modulo brac wtedy ..)
+
+- dla każego kleinta liczymy datagramy ?
+-? nie, z sensem: klient sie dołącza, to słucha od momentu, w którym przyszedł -> tylko jak mu pierwszy datagram przysyłamy, to trzeba spisać sobie ten numer jako 
+   baze
+
+
+- free wszytskie malloci!
+
+- podmienić sleepy na własciwe

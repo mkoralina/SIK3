@@ -10,7 +10,8 @@
 #define FIFO_SIZE 10560 //rozmiar w bajtach kolejki FIFO, którą serwer utrzymuje dla każdego z klientów; ustawiany parametrem -F serwera
 #define FIFO_LOW_WATERMARK 0 //ustawiany parametrem -L serwera
 #define BUF_LEN 10 //rozmiar (w datagramach) bufora pakietów wychodzących, ustawiany parametrem -X serwera
-#define TX_INTERVAL 5 //czas (w ms) pomiędzy kolejnymi wywołaniami miksera, ustawiany parametrem -i serwera 
+ // TODO zmienic na 5
+#define TX_INTERVAL 5000 //czas (w ms) pomiędzy kolejnymi wywołaniami miksera, ustawiany parametrem -i serwera 
 #define QUEUE_LENGTH 5 //liczba kleintow w kolejce do gniazda
 #define MAX_CLIENTS 30 
 
@@ -30,7 +31,7 @@ int fifo_low = FIFO_LOW_WATERMARK;
 int fifo_high;
 int buf_length = BUF_LEN;
 unsigned long interval = TX_INTERVAL;
-int nr; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
+unsigned long long nr = 0; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
 int sock_udp;
 evutil_socket_t listener_socket;
 struct event_base *base;
@@ -51,8 +52,8 @@ struct info {
     int min_FIFO;
     int max_FIFO;
     int buf_state;
-    int nr; //ostatnio odebrany datagram
-    int ack; //oczekiwany od klienta
+    long long nr; //ostatnio odebrany datagram
+    long long ack; //oczekiwany od klienta
 };
 
 typedef struct datagram_address {
@@ -61,6 +62,60 @@ typedef struct datagram_address {
     unsigned short sin_port;
 } datagram_address;
 
+/*
+typedef struct circular_buffer
+{
+     *buffer;     // data buffer
+    void *buffer_end; // end of data buffer
+    size_t capacity;  // maximum number of items in the buffer
+    size_t count;     // number of items in the buffer
+    size_t sz;        // size of each item in the buffer
+    void *head;       // pointer to head
+    void *tail;       // pointer to tail
+} circular_buffer;
+
+void cb_init(circular_buffer *cb, size_t capacity, size_t sz)
+{
+    cb->buffer = malloc(capacity * sz);
+    if(cb->buffer == NULL)
+        // handle error
+    cb->buffer_end = (char *)cb->buffer + capacity * sz;
+    cb->capacity = capacity;
+    cb->count = 0;
+    cb->sz = sz;
+    cb->head = cb->buffer;
+    cb->tail = cb->buffer;
+}
+
+void cb_free(circular_buffer *cb)
+{
+    free(cb->buffer);
+    // clear out other fields too, just to be safe
+}
+
+void cb_push_back(circular_buffer *cb, const void *item)
+{
+    if(cb->count == cb->capacity)
+        // TODO: handle error
+        printf("Bufor przepeniony\n");
+    memcpy(cb->head, item, cb->sz);
+    cb->head = (char*)cb->head + cb->sz;
+    if(cb->head == cb->buffer_end)
+        cb->head = cb->buffer;
+    cb->count++;
+}
+
+void cb_pop_front(circular_buffer *cb, void *item)
+{
+    if(cb->count == 0)
+        // handle error
+    memcpy(item, cb->tail, cb->sz);
+    cb->tail = (char*)cb->tail + cb->sz;
+    if(cb->tail == cb->buffer_end)
+        cb->tail = cb->buffer;
+    cb->count--;
+}
+*/
 struct info client_info[MAX_CLIENTS];
 
 struct connection_description clients[MAX_CLIENTS];
@@ -68,6 +123,8 @@ struct connection_description clients[MAX_CLIENTS];
 char * buf_FIFO[MAX_CLIENTS];
 
 char * server_FIFO;
+
+int activated[MAX_CLIENTS];
 
 //TODO: sprawdzenie poprawnosci podanych parametrow
 void get_parameters(int argc, char *argv[]) {
@@ -127,7 +184,6 @@ static void catch_int (int sig) {
   	if (DEBUG) printf("Poczekaj jeszcze na procesy potomne albo zabij je\n");
   	exit(EXIT_SUCCESS);
 }
-
 
 
 void init_clients(void)
@@ -315,9 +371,9 @@ void * send_a_report(void * arg) {
                          );
                 memcpy(&report[offset], tmp, strlen(tmp));
 
-        		if (DEBUG) {
-                    printf("raport:\n %s\n",report);
-                }   
+        		//if (DEBUG) {
+                //    printf("raport:\n %s\n",report);
+                //}   
         	}
 
         for(i = 0; i < MAX_CLIENTS; i++) {
@@ -468,13 +524,7 @@ void match_and_execute(char *datagram, int clientid) {
 
         char tmp[strlen(data)];
         sprintf(tmp, "%s", data);
-        char * ptr = memcpy(&buf_FIFO[clientid][offset], tmp, strlen(tmp));
-        //printf("*dest : %s\n",ptr);
-
-
-
-        printf("offset: %d\n",offset );
-        //memcpy(&buf_FIFO[clientid][offset], data, strlen(data));
+        memcpy(&buf_FIFO[clientid][offset], tmp, strlen(tmp));
 
         if (client_info[clientid].ack == nr) {
             client_info[clientid].ack++;
@@ -519,9 +569,10 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
 
         client_info[id].ack = 0;
         client_info[id].nr = -1;
+        activated[id] = 1;
         //TODO atrapa! dane moga byc od innych klientow -> to juz bedzie dzialac, trzeba uzupelnic mikser i to wyrzucic
-        char dane[] = "101010100010101011111000010101010101";
-        send_DATA_datagram(dane, 0, client_info[id].ack, fifo_queue_size, id);
+        //char dane[] = "101010100010101011111000010101010101";
+        //send_DATA_datagram(dane, 0, client_info[id].ack, fifo_queue_size, id);
     }
     else 
         syserr("Bledny datagram poczatkowy\n");
@@ -614,68 +665,124 @@ void * read_from_udp(void * arg) {
 }
 
 void add_to_inputs(struct mixer_input* inputs, struct mixer_input input, size_t * position) {
+    //if (DEBUG) printf("Add inputs\n");
     inputs[*position] = input;
-    position++;    
+    //printf("Added\n");
+    (*position)++;    
 }
 
-void print_inputs(size_t * size) {
+void print_inputs(struct mixer_input* inputs, size_t * size) {
     int i;
-    for (i = 0; i < size; i++) {
-        printf("inputs[i]\n");
+    for (i = 0; i < *size; i++) {
+        printf("inputs[%d]: %s\n",i,(char*)inputs[i].data);
     }
 }
 
-struct mixer_input inputs[MAX_CLIENTS];
 
-void mix_and_send_data() {
+
+void mix_and_send() {
+    //if (DEBUG) printf("mix_and_send\n");
     //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
+
+    struct mixer_input inputs[MAX_CLIENTS];
+
+    int target_size = 176 * interval;
+
     size_t num_of_clients = 0;
-    char * output;
+    char * output = malloc(target_size);
+    memset(output, 0, sizeof(output));
+
+    void * output_buf = (void *) output;
+
     size_t output_size;
     int i;
     
     for(i = 0; i < MAX_CLIENTS; i++) {
         //jesli klient jest w systemie i jego kolejka aktywna
-        if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
-            //tworze strukture mixer_input dla kolejki
-            /* chyba musze alokowac, zeby nie bylo tego co ostatnio.. ale z drugiej strony to jest jeden i ten sam watek..
-            struct mixer_input *input = malloc(sizeof(struct mixer_input));
-            input->data = malloc(strlen(buf_FIFO[i]));
-            input->data = buf_FIFO[i];
-            input->len = strlen(buf_FIFO[i]);
-            */
-            /*wiec chyba nie musze jednak*/
+        if(clients[i].ev) {
+        //if(clients[i].ev && client_info[i].buf_state == ACTIVE){
             struct mixer_input input;
-            input.data = buf_FIFO[i];
-            input.len = strlen(buf_FIFO);
-            inputs[i] = input;
+            input.data = malloc(176*interval);
+            memcpy(&input.data[0], buf_FIFO[i], strlen(buf_FIFO[i]));
+            
 
-        
-            //add_to_inputs(inputs, *input, &num_of_clients);
+            //po skopiowaniu zawartosci do input moge update'owac bufor
+            int offset = min(strlen(buf_FIFO[i]),target_size);
+            memcpy(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
+            memset(&buf_FIFO[i][offset], 0, offset);
+
+            input.len = strlen(buf_FIFO[i]);
+            add_to_inputs(inputs, input, &num_of_clients);
         }
     }
-    //print_inputs(inputs, num_of_clients);
-    //mixer(inputs, num_of_clients, (void*) output,                      
-    //        &output_size, interval);
+    //if (num_of_clients) print_inputs(inputs, &num_of_clients);
+
+    //printf("POINTERS:\n");
+    //printf("output: %p\n",output);
+    //printf("inputs[1].data: %p\n",inputs[1].data);
+    //printf("buf_FIFO[1]: %p\n",buf_FIFO[1]);
+    //printf("inputs[0].data: %p\n",inputs[0].data);
+    //printf("buf_FIFO[0]: %p\n",buf_FIFO[0]);
+
+    //printf("PRZED:\n");
+    //if (num_of_clients) print_inputs(inputs, &num_of_clients);    
+    //if (num_of_clients == 2) 
     
 
-    //send_data(output);
+    if (num_of_clients) 
+        mixer(inputs, num_of_clients, output,                      
+            &output_size, interval);
+    
+
+
+    //printf("strlen(output): %d\n", strlen(output));
+
+    output = (char *) output_buf;
+    //if (num_of_clients) print_inputs(inputs, &num_of_clients);
+
+/*
+    if (num_of_clients) {
+        printf("output: %s, output_size: %zu\n", output, output_size);
+        printf("buf_FIFO[0]: %s\n",buf_FIFO[0]);
+    }
+*/
+    send_data(output);
+    //zwolnij zasoby
+    free(output);
+    for (i = 0; i < num_of_clients; i++) {
+        free(inputs[i].data);
+    }
+    //idz spac na interval ms
+    struct timespec tim, tim2;
+    tim.tv_sec = 10; //0s
+    //tim.tv_nsec = interval * 1000000; //interval ms
+    tim.tv_nsec = 0;
+    nanosleep(&tim, &tim2); 
+
 }
 
 //wysylam dane do wszystkich klientow
 void send_data(char * data) {
     int i;
+    int anyone_inside = 0;
+    //przesylam do wszytskich klientow w systemie
     for(i = 0; i < MAX_CLIENTS; i++) {
-        if(clients[i].ev) {
+        if(clients[i].ev && activated[i]) {
             int win = fifo_queue_size - strlen(buf_FIFO[i]);
-            send_DATA_datagram(data, nr, client_info[i].ack, win, i);            
+            printf("Z send_data:\n");
+            send_DATA_datagram(data, nr, client_info[i].ack, win, i);   
+            anyone_inside = 1;         
         }    
     } 
-    //TODO:
-    //zapisuje datagram
-    int beg = (nr % BUF_LEN) * (176 * interval);
-    //od tego miejsca trzeba zaczac zapis datagramu
-    nr++;  
+    
+    if (anyone_inside) {
+        //zapisuje datagram do kolejki FIFO serwera
+        //wyszukuje koniec kolejki:
+        int beg = (nr % BUF_LEN) * (176 * interval);
+        memcpy(&server_FIFO[0], data, 176 * interval); // powinno byc rowne sizeof(data) i w sumie strlen(data) tez
+        nr++;
+    }
+      
 }
 
 void set_event_TCP() {
@@ -715,6 +822,14 @@ void set_event_TCP() {
     if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
 }
 
+void init_activated() {
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+        activated[i] = 0;    
+    }
+
+}
+
 int main (int argc, char *argv[]) {
 
     if (DEBUG && argc == 1) {
@@ -730,6 +845,7 @@ int main (int argc, char *argv[]) {
     server_FIFO = malloc(176 * interval * BUF_LEN); //wsadzamy co 176 * interval miejsc nadane datargramy
 
 	get_parameters(argc, argv);
+    init_activated();
 	init_client_info();
     init_buf_FIFOs();
   	init_clients(); //gniazda dla TCP
@@ -742,7 +858,7 @@ int main (int argc, char *argv[]) {
     create_thread(&send_a_report);
 
     for (;;) {
-        mix_and_send_data();
+        mix_and_send();
     }   
 
     //TODO: free wszystko co mallocowalas

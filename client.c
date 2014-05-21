@@ -55,7 +55,7 @@
 
 #define RETRANSMIT_LIMIT 10 
 
-#define DEBUG 0 
+#define DEBUG 1 
 
 int port_num = PORT;
 char server_name[NAME_SIZE];
@@ -67,7 +67,7 @@ int last_sent = -1; /* nr z polecen */
 int ack = -1;
 int win = 0;
 int clientid = -1; /* -1 to kleint niezidentyfikowany */
-int nr_expected = 0;
+int nr_expected = -1;
 int nr_max_seen = -1;
 int connection_lost = 0;
 
@@ -306,10 +306,15 @@ void match_and_execute(char *datagram) {
     if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
         if (DEBUG) {
             printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data); 
-            if (!strlen(data)) 
-                printf("Przeslano pusty bufor\n");
+            //if (!strlen(data)) 
+            //    printf("Przeslano pusty bufor\n");
         }
-        if (nr > nr_expected) {
+        //gdy jest to nasz pierwszy DATA datagram 
+        if (nr_expected == -1) {
+            nr_expected = nr + 1;
+            printf("%s\n",data);
+        }
+        else if (nr > nr_expected) {
             if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {
                 send_RETRANSMIT_datagram(nr_expected);
             }
@@ -321,7 +326,6 @@ void match_and_execute(char *datagram) {
         }
         else if (nr == nr_expected) {
             //przyjmij dane
-            printf("Tu laduje\n");
             printf("%s\n",data);
         }
         nr_max_seen = max(nr, nr_max_seen);
