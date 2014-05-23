@@ -311,9 +311,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
         
  
     }   
-
-    // TODO: UWAGA! bo to dziala w kolko, a win nie zmniejszam i czy to nie wcyzta czasem nowego komunikatu juz
-    // mimo, ze nie powinno ?? (czy ack na to nie pozwoli?)      
+     
 }
 
 

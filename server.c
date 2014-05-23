@@ -11,18 +11,17 @@
 #define FIFO_LOW_WATERMARK 0 //ustawiany parametrem -L serwera
 #define BUF_LEN 10 //rozmiar (w datagramach) bufora pakietów wychodzących, ustawiany parametrem -X serwera
  // TODO zmienic na 5
-#define TX_INTERVAL 5000 //czas (w ms) pomiędzy kolejnymi wywołaniami miksera, ustawiany parametrem -i serwera 
+#define TX_INTERVAL 5 //czas (w ms) pomiędzy kolejnymi wywołaniami miksera, ustawiany parametrem -i serwera 
 #define QUEUE_LENGTH 5 //liczba kleintow w kolejce do gniazda
 #define MAX_CLIENTS 30 
 
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 1 
+#define DEBUG 0 
 
 #define BUF_SIZE 64000
 
-static int finish = FALSE;
 
 //popraw typy jeszcze
 int port_num = PORT;
@@ -36,7 +35,12 @@ int sock_udp;
 evutil_socket_t listener_socket;
 struct event_base *base;
 struct event *listener_socket_event;
+int finish = 0;
 
+pthread_t event_thread = 0;
+pthread_t udp_thread = 0;
+pthread_t report_thread = 0;
+pthread_t main_thread = 0;
 
 struct connection_description {
     int id; 
@@ -120,16 +124,30 @@ void get_parameters(int argc, char *argv[]) {
     }	
 }
 
+void wait_for(pthread_t * thread) {
+    if (*thread != 0) {
+        void* ret = NULL;
+        if ((pthread_join(*thread, &ret)) != 0) {
+            syserr("pthread_join in wait_for");
+        }
+        else {
+            printf("thread joined\n");
+        }
+    }
+}
+
 /* Obsługa sygnału kończenia */
 static void catch_int (int sig) {
-	/* zwalniam zasoby */
-    //ogarnic te watki i zwalnianie pamieci po mallocu
+    //TODO: zwalnianie zasobów!!!
 	finish = TRUE;
-  	if (DEBUG) {
+    if (DEBUG) printf("Czeka na zakonczenie watkow\n");
+    wait_for(&report_thread);
+    wait_for(&event_thread);
+    wait_for(&udp_thread);
+  	
+    if (DEBUG) {
   		printf("Exit() due to Ctrl+C\n");
   	}
-  	//TODO
-  	if (DEBUG) printf("Poczekaj jeszcze na procesy potomne albo zabij je\n");
   	exit(EXIT_SUCCESS);
 }
 
@@ -298,18 +316,15 @@ void send_ACK_datagram(int ack, int win, int clientid) {
 }
 
 void * send_a_report(void * arg) {
-	//wersja beta:
-	//create and print a report
-    
-    for (;;) {
+	report_thread = pthread_self();    
+    while (!finish) {
 
         char report[BUF_SIZE];
         memset(report, 0, sizeof(report));
         memcpy(report, "\n", 1);
 
-    	printf("\n");
     	int i;
-      	for(i = 0; i < MAX_CLIENTS; i++)
+      	for (i = 0; i < MAX_CLIENTS; i++)
         	//jesli klient jest w systemie i jego kolejka aktywna
         	
             //TODO:
@@ -330,7 +345,7 @@ void * send_a_report(void * arg) {
                 memcpy(&report[offset], tmp, strlen(tmp));
         	}
 
-        for(i = 0; i < MAX_CLIENTS; i++) {
+        for (i = 0; i < MAX_CLIENTS; i++) {
             if(clients[i].ev) {
                 client_info[i].min_FIFO = fifo_queue_size;
                 client_info[i].max_FIFO = 0;
@@ -345,8 +360,11 @@ void * send_a_report(void * arg) {
         tim.tv_sec = 10; //1s
         tim.tv_nsec = 0; //0
         nanosleep(&tim, &tim2); 
-
-    }       
+    }  
+    report_thread = 0;
+    void* ret = NULL;
+    pthread_exit(&ret); 
+    //return 0;    
 }
 
 
@@ -604,41 +622,43 @@ void * process_datagram(void *param) {
     return 0;    
 }
 
-void create_UDP_thread(datagram_address* arg) {
-    /*przygotowaniu watku*/
+void create_processing_thread(datagram_address* arg) {
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
-    
-    /*stworzenie watku*/
+    pthread_attr_init(&attr);      
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);   
+
     pthread_create(&r,&attr,process_datagram,(void*)arg);
 }
 
 void * event_loop(void * arg) {
-
+    main_thread = pthread_self();
+    
     if (DEBUG) printf("Entering dispatch loop.\n");
     if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
     if (DEBUG) printf("Dispatch loop finished.\n");
 
     event_free(listener_socket_event);
     event_base_free(base); 
-    return 0;   
+    main_thread = 0;
+    void* ret = NULL;
+    pthread_exit(&ret);
+    return 0; //unreacheable?  
 }
 
 void create_thread(void * (*func)(void *)) {
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED); 
 
-    pthread_create(&r,&attr,*func,NULL);        
+    pthread_create(&r,&attr,*func,NULL);      
 }
 
 void * read_from_udp(void * arg) {
+    udp_thread = pthread_self();
     char * datagram = malloc(BUF_SIZE * sizeof(char));
     ssize_t len;
-    for (;;) {
+    while (!finish) {
         do {
             memset(datagram, 0, BUF_SIZE);                       
             
@@ -668,14 +688,18 @@ void * read_from_udp(void * arg) {
                 strcpy(da->datagram, datagram);
                 da->sin_addr = client_udp.sin6_addr;
                 da->sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
-                create_UDP_thread(da);
+                create_processing_thread(da);
                 
 
             }
-        } while (len > 0); //dlugosc 0 jest ciezko uzyskac
+        } while (len > 0 && !finish); //dlugosc 0 jest ciezko uzyskac
         if (DEBUG) (void) printf("finished exchange\n");
     }
     free(datagram);
+    udp_thread = 0;
+    void* ret = NULL;
+    pthread_exit(&ret);
+    return 0;
 }
 
 void add_to_inputs(struct mixer_input* inputs, struct mixer_input input, size_t * position) {
@@ -748,8 +772,9 @@ void mix_and_send() {
             &output_size, interval);   
 
     output = (char *) output_buf;
-    printf("output_buf: %s\n",output_buf);
-    printf("output: %s\n",output);
+    //printf("output_buf: %s\n",output_buf);
+    //printf("output: %s\n",output);
+    printf("output_size: %d\n", output_size);
 
     send_data(output);
     //zwolnij zasoby 
@@ -850,6 +875,8 @@ int main (int argc, char *argv[]) {
          "-H [fifo_high_watermark] -X [buffer_size] -i [tx_interval] \n");
     }
 
+    main_thread = pthread_self();
+
     /* Ctrl-C konczy porogram */
     if (signal(SIGINT, catch_int) == SIG_ERR) {
         syserr("Unable to change signal handler\n");
@@ -882,9 +909,15 @@ int main (int argc, char *argv[]) {
 
 /* TODO:
 
+0) NAJWAZNEIJSZE:
+    czytanie z buforów, czyszczenie! tak, zeby można było dosyłać -> zmniejszanie win po wczytaniu do mix_send
+
+
 1) W przypadku wykrycia kłopotów z połączeniem przez serwer, powinien on zwolnić wszystkie zasoby związane z tym klientem
 
 -> sprawdz, czy sie cos tworzy zanim sie nawiaze polaczenie, jak tak, to zwolnij
+uwaga! to sie tylko dotyczy TCP! 
+
 
 2) Jeśli serwer przez sekundę nie odbierze żadnego datagramu UDP, uznaje połączenie za kłopotliwe. 
    Zezwala się jednakże na połączenia TCP bez przesyłania danych UDP, jeśli się chce zobaczyć tylko raporty.
@@ -908,4 +941,9 @@ UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW
 
 7) poprawic styl retransmisji
 
+
+
+
+
+8) uwaga na watki obsługujące datagramy create_UDP_thread bo one sa detached
 */

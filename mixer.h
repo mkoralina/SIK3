@@ -58,6 +58,10 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
 
     //inicjalizacja na zera?
+    //for (i = 0; i < n; i++) {
+    //    int_input[i] = {0};
+    //}
+
 
     for (i = 0; i < n; i++) {
         //tutaj musze alokowac pamiec? jesli to jest tylko castowanie? to ma wskaxnik chyba tylko, nie?
@@ -82,7 +86,7 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
     //ustalam wartosci consumed 
     for (i = 0; i < n; i++) {
-        inputs[i].consumed = min (strlen(inputs[i].data), target_size); 
+   //     inputs[i].consumed = min (strlen(inputs[i].data), target_size); ZLE!
     }
 
 
@@ -90,16 +94,6 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     printf("output_buf w mixerze: %s\n",output_buf);
 
     *output_size  = strlen((char *)output_buf); 
-
-
-
-    /* ATRAPA: jako output wypluwa input 1. klienta, nic nie miksuje 
-    //printf("size od output_buf: %zu\n", sizeof(output_buf));
-    //memset(output_buf, 0, sizeof(output_buf));
-    memcpy(&output_buf[0], inputs[0].data, strlen(inputs[0].data));
-    *output_size = strlen(output_buf);
-    */
-
 }
 
 
