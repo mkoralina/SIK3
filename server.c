@@ -145,6 +145,7 @@ void init_clients(void)
 
 char * addr_to_str(struct sockaddr_in6 *addr) {
     char * str = malloc(sizeof(char) * INET6_ADDRSTRLEN);
+    memset(str, 0, INET6_ADDRSTRLEN);
     //char str[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
     //if (DEBUG) printf("adres klienta: %s\n", str);
@@ -165,17 +166,18 @@ struct connection_description *get_client_slot(void)
 void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
 {
     struct connection_description *cl = (struct connection_description *)arg;
-    char buf[BUF_SIZE+1];
+    char buf[BUF_SIZE+1] = { 0 };
+
 
     int r = read(sock, buf, BUF_SIZE);
     if(r <= 0) {
         if(r < 0) {
-            fprintf(stderr, "Error (%s) while reading data from %s:%d. Closing connection.\n",
-    	       strerror(errno), addr_to_str(&cl->address), ntohs(cl->address.sin6_port));//inet_ntoa prostsza, starsza wersja ntop, ntop jest ogólna, podaje sie rodzine adresow
+            fprintf(stderr, "Error (%s) while reading data from adres:%d. Closing connection.\n",
+    	       strerror(errno), ntohs(cl->address.sin6_port));//inet_ntoa prostsza, starsza wersja ntop, ntop jest ogólna, podaje sie rodzine adresow
         } else {
-            fprintf(stderr, "Connection from %s:%d closed.\n",
-    	       addr_to_str(&cl->address), ntohs(cl->address.sin6_port));
-        }
+            fprintf(stderr, "Connection from adres:%d closed.\n",
+    	       ntohs(cl->address.sin6_port));
+        }    
         if(event_del(cl->ev) == -1) syserr("Can't delete the event.");
     	//zwalniamy meijsce w tablicy
         event_free(cl->ev);
@@ -186,12 +188,12 @@ void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
     buf[r] = 0;
     //wypisujemy adres i port klienta ladnie
     if (DEBUG) 
-        printf("[%s:%d] %s\n", addr_to_str(&cl->address), ntohs(cl->address.sin6_port), buf);
+        printf("[adres:%d] %s\n", ntohs(cl->address.sin6_port), buf);
 }
 
 //nieprzestestowane
 void send_datagram(char *datagram, int clientid) {
-    if (DEBUG) printf("Wysyla: %s\n",datagram);
+    //if (DEBUG) printf("Wysyla: %s\n",datagram);
 
     struct sockaddr_in client_address;
     client_address.sin_family = AF_INET; 
@@ -221,7 +223,8 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
   	snprintf(clientid, sizeof(clientid), "%" PRIu32, id); /* Method 2 */
 
 	char* data= "CLIENT";
-	char* datagram = malloc(strlen(data) + strlen(clientid) + 2);
+	char* datagram = malloc(strlen(data) + strlen(clientid) + 3);
+    memset(datagram, 0, sizeof(datagram));
 
 	sprintf(datagram, "%s %s\n", data, clientid);
 	//printf("%s o strlen %d", datagram, strlen(datagram));
@@ -239,6 +242,7 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
 
 //nieprzetestowane
 void send_DATA_datagram(char *data, int no, int ack, int win, int clientid) {
+    printf("send_DATA_datagram\n");
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
     int str_no_size = (int) ((ceil(log10(num))+1)*sizeof(char));
@@ -261,7 +265,8 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid) {
     sprintf(str_win, "%d", win);
 
     char* type= "DATA";
-    char* datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 2 + strlen(data));
+    char* datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 5 + strlen(data));
+    memset(datagram, 0, sizeof(datagram));
 
     sprintf(datagram, "%s %s %s %s\n%s", type, str_no, str_ack, str_win, data);
     send_datagram(datagram, clientid);
@@ -284,7 +289,8 @@ void send_ACK_datagram(int ack, int win, int clientid) {
     sprintf(str_win, "%d", win);
 
     char* type= "ACK";
-    char* datagram = malloc(strlen(type) + strlen(str_ack) + strlen(str_win) + 2);
+    char* datagram = malloc(strlen(type) + strlen(str_ack) + strlen(str_win) + 4);
+    memset(datagram, 0, sizeof(datagram));
 
     sprintf(datagram, "%s %s %s\n", type, str_ack, str_win);
     send_datagram(datagram, clientid);
@@ -306,7 +312,7 @@ void * send_a_report(void * arg) {
       	for(i = 0; i < MAX_CLIENTS; i++)
         	//jesli klient jest w systemie i jego kolejka aktywna
         	
-            //TODO !!!
+            //TODO:
         	//TU TRZEBA ODKOMENTOWac!
         	//if(clients[i].ev && client_info[i].buf_state == ACTIVE) {
         	if(clients[i].ev) {
@@ -322,14 +328,12 @@ void * send_a_report(void * arg) {
                          client_info[i].max_FIFO
                          );
                 memcpy(&report[offset], tmp, strlen(tmp));
-
-        		//if (DEBUG) {
-                //    printf("raport:\n %s\n",report);
-                //}   
         	}
 
         for(i = 0; i < MAX_CLIENTS; i++) {
             if(clients[i].ev) {
+                client_info[i].min_FIFO = fifo_queue_size;
+                client_info[i].max_FIFO = 0;
                 int w;
                 if ((w = write(clients[i].sock, report, strlen(report))) == 0) {
                     syserr("write: send a report\n");
@@ -428,13 +432,14 @@ int create_UDP_socket() {
 	server.sin6_family = AF_INET6; 
   	server.sin6_addr = in6addr_any; //wszyskie interfejsy
   	server.sin6_port = htons(port_num); //port num podany na wejsciu 
+    server.sin6_flowinfo = 0; /* IPv6 flow information */
 	
     if (bind(sock, (struct sockaddr *) &server,
       (socklen_t) sizeof(server)) < 0)
         syserr("bind");
 
     if (DEBUG) {
-  		printf("UDP : Server.sin6_addr: %s\n", addr_to_str(&server));
+  		//printf("UDP : Server.sin6_addr: %s\n", addr_to_str(&server));
   		printf("UDP : Accepting on port: %hu\n",ntohs(server.sin6_port));
   	}
     return sock; 	
@@ -463,12 +468,12 @@ int get_clientid(struct in6_addr sin_addr, unsigned short sin_port) {
 }
 
 void match_and_execute(char *datagram, int clientid) {
-    if (DEBUG) printf("[TID:%li] match_and_execute: %s\n",syscall(SYS_gettid),datagram);
+    if (DEBUG) printf("match_and_execute: %s\n",datagram);
     int nr;    
     //char *data;
-    char data[BUF_SIZE];
-    if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 2) {
-        if (DEBUG) printf("[TID:%li] Zmatchowano do UPLOAD, nr = %d, dane = %s\n", syscall(SYS_gettid), nr, data);
+    char data[BUF_SIZE] = { 0 };
+    if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 1) {
+        if (DEBUG) printf("Zmatchowano do UPLOAD, nr = %d, dane = %s\n",nr, data);
 
         int win = fifo_queue_size - strlen(buf_FIFO[clientid]);
         int offset = fifo_queue_size - win;
@@ -476,8 +481,10 @@ void match_and_execute(char *datagram, int clientid) {
         //sprintf(fifo,"%s",data);
 
         char tmp[strlen(data)];
+        memset(tmp, 0, strlen(data));
         sprintf(tmp, "%s", data);
         memcpy(&buf_FIFO[clientid][offset], tmp, strlen(tmp));
+        update_min_max(clientid, strlen(buf_FIFO[clientid]));
 
         if (client_info[clientid].ack == nr) {
             client_info[clientid].ack++;
@@ -490,7 +497,7 @@ void match_and_execute(char *datagram, int clientid) {
     }
     else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
         int win = fifo_queue_size - strlen(buf_FIFO[clientid]);
-        if (DEBUG) printf("[TID:%li] Zmachowano do RETRANSMIT\n",syscall(SYS_gettid));
+        if (DEBUG) printf("Zmachowano do RETRANSMIT\n");
         if (last_nr - nr >= BUF_LEN) {
             //przesylam cala tablice
             int beg = (last_nr + 1) % BUF_LEN;
@@ -498,6 +505,7 @@ void match_and_execute(char *datagram, int clientid) {
             //za last_sent w tablicy (najwczesniejsze)
             for (i = beg; i < BUF_LEN; i++) {
                 char * datagram = malloc(176 * interval);
+                memset(datagram, 0, 176 * interval);
                 memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
                 send_DATA_datagram(datagram, (last_nr - beg + 1 + i - BUF_LEN) ,client_info[clientid].ack, win,clientid);
                 free(datagram);
@@ -506,6 +514,7 @@ void match_and_execute(char *datagram, int clientid) {
             int end = last_nr % BUF_LEN;
             for (i = 0; i <= end; i++) {
                 char * datagram = malloc(176 * interval);
+                memset(datagram, 0, 176 * interval);
                 memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
                 send_DATA_datagram(datagram, (last_nr - end + i) ,client_info[clientid].ack, win,clientid);
                 free(datagram);
@@ -516,6 +525,7 @@ void match_and_execute(char *datagram, int clientid) {
             int i;
             for (i = nr; i < last_nr ; i++) {
                 char * datagram = malloc(176 * interval);
+                memset(datagram, 0, 176 * interval);
                 memcpy(datagram, &server_FIFO[(i % BUF_LEN) * 176*interval], 176 * interval);
                 send_DATA_datagram(datagram, i, client_info[clientid].ack, win,clientid);
                 free(datagram);
@@ -527,6 +537,7 @@ void match_and_execute(char *datagram, int clientid) {
             int beg = nr % BUF_LEN;
             for (i = beg; i < BUF_LEN; i++) {
                 char * datagram = malloc(176 * interval);
+                memset(datagram, 0, 176 * interval);
                 memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
                 send_DATA_datagram(datagram, (nr - beg + i) ,client_info[clientid].ack, win, clientid);
                 free(datagram);
@@ -535,6 +546,7 @@ void match_and_execute(char *datagram, int clientid) {
             int end = last_nr % BUF_LEN;
             for (i = 0; i <= end; i++) {
                 char * datagram = malloc(176 * interval);
+                memset(datagram, 0, 176 * interval);
                 memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
                 send_DATA_datagram(datagram, (last_nr - end + i) ,client_info[clientid].ack, win,clientid);
                 free(datagram);
@@ -543,7 +555,7 @@ void match_and_execute(char *datagram, int clientid) {
         
     }
     else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
-        if (DEBUG) printf("[TID:%li] Zmatchowano do KEEPALIVE\n",syscall(SYS_gettid));
+        if (DEBUG) printf("Zmatchowano do KEEPALIVE\n");
         //TODO : udpate czasu ostatniej wiadomosci od klienta
     }
     else 
@@ -554,7 +566,7 @@ void match_and_execute(char *datagram, int clientid) {
     
 
 void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short sin_port) {
-    if (DEBUG) printf("[TID:%li] add_new_client\n",syscall(SYS_gettid));
+    if (DEBUG) printf("add_new_client\n");
     if (DEBUG) printf("datagram: %s\n",datagram);
     int id;
     if (sscanf(datagram, "CLIENT %d\n", &id) == 1) {
@@ -577,7 +589,7 @@ void * process_datagram(void *param) {
     struct in6_addr sin_addr = da.sin_addr;
     unsigned short sin_port = da.sin_port;
 
-    if (DEBUG) printf("[TID:%li] process_datagram, datagram: %s\n",syscall(SYS_gettid), datagram);
+    if (DEBUG) printf("process_datagram, datagram: %s\n", datagram);
     int clientid = get_clientid(sin_addr, sin_port);
     if (clientid < 0) {
         //klienta nie ma w tabeli, jesli datagram jest typu CLIENT, trzeba go dodac 
@@ -586,7 +598,7 @@ void * process_datagram(void *param) {
     else {
         match_and_execute(datagram, clientid);
     } 
-    free(((datagram_address*)param)->datagram);
+    //free(((datagram_address*)param)->datagram);
     free(param);
     //free(&da);  
     return 0;    
@@ -624,7 +636,7 @@ void create_thread(void * (*func)(void *)) {
 }
 
 void * read_from_udp(void * arg) {
-    char * datagram = malloc(BUF_SIZE+1);
+    char * datagram = malloc(BUF_SIZE * sizeof(char));
     ssize_t len;
     for (;;) {
         do {
@@ -642,12 +654,16 @@ void * read_from_udp(void * arg) {
             if (len < 0)
                   syserr("error on datagram from client socket");
             else {
-                (void) printf("read through UDP from [%s:%d]: %zd bytes: %.*s\n", addr_to_str(&client_udp), ntohs(client_udp.sin6_port), len,
+                (void) printf("read through UDP from [adres:%d]: %zd bytes: %.*s\n", ntohs(client_udp.sin6_port), len,
                         (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
                 if (DEBUG) printf("DATAGRAM: %s\n", datagram);
                 
-                struct datagram_address *da = malloc(sizeof(struct datagram_address));
+                struct datagram_address *da= malloc(sizeof(datagram_address));
+                memset(da, 0, sizeof(datagram_address)); // TODO: to jest dziwne..
+
                 da->datagram = malloc(len);
+                memset(da->datagram, 0, len);
+
 
                 strcpy(da->datagram, datagram);
                 da->sin_addr = client_udp.sin6_addr;
@@ -676,24 +692,22 @@ void print_inputs(struct mixer_input* inputs, size_t * size) {
     }
 }
 
+void update_min_max(int i, long long int size) {
+    client_info[i].min_FIFO = min(client_info[i].min_FIFO, size);
+    client_info[i].max_FIFO = max(client_info[i].max_FIFO, size);
+}
+
 
 
 void mix_and_send() {
     //if (DEBUG) printf("mix_and_send\n");
     //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
 
-    struct mixer_input inputs[MAX_CLIENTS];
-
+    struct mixer_input inputs[MAX_CLIENTS] = {0};
     int target_size = 176 * interval;
-
     size_t num_of_clients = 0;
-    
-
     char * output = malloc(target_size);
-
-    //printf("size od output: %zu\n", sizeof(output)); //-> 8
     memset(output, 0, target_size);
-
 
     void * output_buf = (void *) output;
     //memset(output_buf, 0, sizeof(output_buf));
@@ -708,7 +722,7 @@ void mix_and_send() {
             struct mixer_input input;
             input.data = malloc(176*interval);
 
-            printf("Po mallocu input.data %d : %p\n",i,input.data);
+            //printf("Po mallocu input.data %d : %p\n",i,input.data);
             memset(input.data, 0, 176*interval);
             memcpy(&input.data[0], buf_FIFO[i], strlen(buf_FIFO[i]));
             
@@ -720,6 +734,8 @@ void mix_and_send() {
             int offset = min(strlen(buf_FIFO[i]),target_size);
             memcpy(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
             memset(&buf_FIFO[i][offset], 0, offset);
+            update_min_max(i, strlen(buf_FIFO[i]));
+
 
             input.len = strlen(buf_FIFO[i]);
             add_to_inputs(inputs, input, &num_of_clients);
@@ -840,6 +856,7 @@ int main (int argc, char *argv[]) {
     }
 
     server_FIFO = malloc(176 * interval * BUF_LEN); //wsadzamy co 176 * interval miejsc nadane datargramy
+    memset(server_FIFO, 0, 176 * interval * BUF_LEN);
 
 	get_parameters(argc, argv);
     init_activated();
@@ -879,11 +896,11 @@ int main (int argc, char *argv[]) {
 
    ale tez updateowac te czasy przy odbiorze keepalive (bo to wystarczy)
 
-UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW (w obu: server i client)
+UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW
 
 3) ucinanie adresow IPv4 do swojej dlugosci z IPv6
 
-4) ustawianie wartosci kolejek dla klientow -> sprawdzanie
+4) ustawianie wartosci kolejek dla klientow -> sprawdzanie ???
 
 5) poprawić stałe wszytskie
 

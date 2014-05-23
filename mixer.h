@@ -43,37 +43,41 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
     printf("MIXER\n");
 
-    /* FAKTYCZNA TRESC MIKSERA : (mozliwe, ze do poprawy, jak zrozumiem, co z tymi danymi)
+    // FAKTYCZNA TRESC MIKSERA : 
 
     int16_t num;
     int16_t sum;
 
+    int16_t * int_input[n];
+
     int target_size = 176 * tx_interval_ms;
 
     int i;
-    int j;
+    long long int j;
 
-    //uzupelniam brakujace dane zerami    
+
+
+    //inicjalizacja na zera?
+
     for (i = 0; i < n; i++) {
-        for (j = strlen(inputs[i].data); j < target_size; j++) {
-            memcpy(&inputs[i].data[j], "0", strlen("0"));
-        }
+        //tutaj musze alokowac pamiec? jesli to jest tylko castowanie? to ma wskaxnik chyba tylko, nie?
+        int_input[i] = (int16_t *) inputs[i].data;
     }
 
-    //przesuwam sie o 2 bajty (16 bitow)
-    for (j = 0; j < (target_size/2); j++) {
+    int16_t * int_output_buf = (int16_t *) output_buf;
+
+    for (j = 0; j < target_size/2; j++) {
         sum = 0;
-        for (i = 0; i < n; i++) {            
-            sscanf(&inputs[i].data[2*j], "%hd", &num);
-            printf("Wczytano num: %hd\n",num);
-            if (num >= 0) {
-                sum = min(sum + num, MAX_SHORT_INT);
-            }
-            else {
-                sum = max(sum + num, MIN_SHORT_INT);
-            }        
+        for (i = 0; i < n; i++) { 
+            num = int_input[i][j];           
+            if (num)  //TODO: nie wiem, cz to dziala
+                if (num >= 0) 
+                    sum = min(sum + num, MAX_SHORT_INT);                
+                else 
+                    sum = max(sum + num, MIN_SHORT_INT);                        
+            
         }
-        memcpy(&output_buf[2*j], &sum, sizeof(int16_t));
+        int_output_buf[j] = sum;
     }
 
     //ustalam wartosci consumed 
@@ -81,17 +85,20 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
         inputs[i].consumed = min (strlen(inputs[i].data), target_size); 
     }
 
+
+
     printf("output_buf w mixerze: %s\n",output_buf);
 
-    *output_size  = strlen(output_buf); 
+    *output_size  = strlen((char *)output_buf); 
 
-    */
 
-    /* ATRAPA: jako output wypluwa input 1. klienta, nic nie miksuje */
+
+    /* ATRAPA: jako output wypluwa input 1. klienta, nic nie miksuje 
     //printf("size od output_buf: %zu\n", sizeof(output_buf));
     //memset(output_buf, 0, sizeof(output_buf));
     memcpy(&output_buf[0], inputs[0].data, strlen(inputs[0].data));
     *output_size = strlen(output_buf);
+    */
 
 }
 

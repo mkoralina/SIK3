@@ -31,3 +31,18 @@ zwalnianie pamięci po wątkach
 
 
 retransmisja serwer -> kleint !!!!
+
+
+mikser wyciąga: min(176B*TX_INTERVAL, rozmiar kolejki)
+
+
+
+
+Source and destination overlap in memcpy(0x61c6040, 0x61c6040, 10560)
+==17014==    at 0x4C2E403: memcpy@@GLIBC_2.14 (mc_replace_strmem.c:882)
+==17014==    by 0x40408F: mix_and_send (in /home/monika/SIK/zad3/server)
+==17014==    by 0x404754: main (in /home/monika/SIK/zad3/server)
+
+faktycznie to moze na siebie zachodzić!!!! ale to jakiś poważny błąd?
+
+KLEINT: nie moze sie polaczyc drugi raz z tym samym socketem na udp chyba :/
