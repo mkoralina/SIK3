@@ -41,7 +41,7 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     size_t* output_size, unsigned long tx_interval_ms) {
     // n - liczba aktywnych klientow
 
-    printf("MIXER\n");
+   // printf("MIXER\n");
 
     // FAKTYCZNA TRESC MIKSERA : 
 
@@ -50,7 +50,8 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
     int16_t * int_input[n];
 
-    int target_size = 176 * tx_interval_ms;
+    int target_size = 176 * tx_interval_ms; //jeszcze sprawdzic, czy to nie jest wieksze od fifo_queue_size w ogóle
+    //TODO: faktycznie, żeby robil te wielkosc, bo teraz nie robi jak jest za malo danych:/ (inna rzecz, ze nie powinno byc raczej)
 
     int i;
     long long int j;
@@ -74,24 +75,24 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
         sum = 0;
         for (i = 0; i < n; i++) { 
             num = int_input[i][j];           
-            if (num)  //TODO: nie wiem, cz to dziala
+            if (num) { //TODO: nie wiem, cz to dziala
                 if (num >= 0) 
                     sum = min(sum + num, MAX_SHORT_INT);                
                 else 
                     sum = max(sum + num, MIN_SHORT_INT);                        
-            
+            }
         }
         int_output_buf[j] = sum;
     }
 
     //ustalam wartosci consumed 
     for (i = 0; i < n; i++) {
-   //     inputs[i].consumed = min (strlen(inputs[i].data), target_size); ZLE!
+        inputs[i].consumed = min (strlen(inputs[i].data), target_size); 
     }
 
 
 
-    printf("output_buf w mixerze: %s\n",output_buf);
+    //printf("output_buf w mixerze: %s\n",output_buf);
 
     *output_size  = strlen((char *)output_buf); 
 }

@@ -136,6 +136,34 @@ void get_parameters(int argc, char *argv[]) {
     }
 }
 
+void wait_for(pthread_t * thread) {
+    if (*thread != 0) {
+        void* ret = NULL;
+        if ((pthread_join(*thread, &ret)) != 0) {
+            syserr("pthread_join in wait_for");
+        }
+        else {
+            printf("thread joined\n");
+        }
+    }
+}
+
+void reboot() {
+    printf("REBOOT\n");
+    finish = TRUE; 
+    wait_for(&keepalive_thread);
+    wait_for(&event_thread);
+
+    //wait 300ms
+    struct timespec tim, tim2;
+    tim.tv_sec = 5; //5s
+    tim.tv_nsec = 0; 
+    nanosleep(&tim, &tim2); 
+    //reopen
+    main_loop();
+}
+
+
 void send_datagram(char *datagram) {
     ssize_t snd_len;
     int flags = 0;
@@ -229,21 +257,6 @@ void * send_KEEEPALIVE_datagram(void * arg) {
 }
 
 
-void reboot() {
-    printf("REBOOT\n");
-    finish = TRUE; 
-    wait_for(&keepalive_thread);
-    wait_for(&event_thread);
-
-    //wait 300ms
-    struct timespec tim, tim2;
-    tim.tv_sec = 5; //5s
-    tim.tv_nsec = 0; 
-    nanosleep(&tim, &tim2); 
-    //reopen
-    main_loop();
-}
-
 /* Obsługa sygnału kończenia */
 static void catch_int (int sig) {
     /* zwalniam zasoby */
@@ -259,17 +272,6 @@ static void catch_int (int sig) {
     exit(EXIT_SUCCESS);
 }
 
-void wait_for(pthread_t * thread) {
-    if (*thread != 0) {
-        void* ret = NULL;
-        if ((pthread_join(*thread, &ret)) != 0) {
-            syserr("pthread_join in wait_for");
-        }
-        else {
-            printf("thread joined\n");
-        }
-    }
-}
 
 void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
     //printf("Czytanie z stdin\n");
@@ -305,7 +307,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
         if (strlen(buf) > 0) {
             last_sent++;
            // printf("send_UPLOAD_datagram(%s, dl: %d,nr: %d)\n", buf, strlen(buf),last_sent);
-            printf("send_UPLOAD_datagram( dl: %d,nr: %d)\n", strlen(buf),last_sent);
+            printf("send_UPLOAD_datagram( dl: %zu,nr: %d)\n", strlen(buf),last_sent);
             send_UPLOAD_datagram(buf, last_sent);                
         }
         
@@ -314,6 +316,13 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
      
 }
 
+void create_thread(void * (*func)(void *)) {
+    pthread_t r; /*wynik*/
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+
+    pthread_create(&r,&attr,*func,NULL);        
+}
 
 void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
     if (DEBUG) {
@@ -424,13 +433,7 @@ void * event_loop(void * arg) { //TODO: ustawic, zeby w tej petli sie jakos to k
     pthread_exit(&ret); 
 }
 
-void create_thread(void * (*func)(void *)) {
-    pthread_t r; /*wynik*/
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
 
-    pthread_create(&r,&attr,*func,NULL);        
-}
 
 void match_and_execute(char *datagram) {
     int nr;
@@ -513,9 +516,9 @@ void read_from_UDP() {
             }    
             else {
                 if (DEBUG) {
-                    (void) printf("read through UDP from [adres:%d]: %zd bytes: %.*s\n", ntohs(server_udp.sin6_port), len,
-                        (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
-                    printf("Otrzymano: %s\n", datagram);
+                    //(void) printf("read through UDP from [adres:%d]: %zd bytes: %.*s\n", ntohs(server_udp.sin6_port), len,
+                    //    (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
+                    //printf("Otrzymano: %s\n", datagram);
                 }    
                 match_and_execute(datagram);    
             }
