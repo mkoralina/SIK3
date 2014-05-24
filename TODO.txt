@@ -46,3 +46,6 @@ Source and destination overlap in memcpy(0x61c6040, 0x61c6040, 10560)
 faktycznie to moze na siebie zachodzić!!!! ale to jakiś poważny błąd?
 
 KLEINT: nie moze sie polaczyc drugi raz z tym samym socketem na udp chyba :/
+
+gdzies mam te zmienną activated - trzeba to zmieniac, jak sie odczepia klient
+

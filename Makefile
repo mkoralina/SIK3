@@ -2,7 +2,7 @@
 # Data: 13.05.2014r. 
 
 CC = gcc
-CFLAGS = -Wall -pthread
+CFLAGS = -Wall -g -pthread 
 TARGETS = client server 
 
 all: $(TARGETS) 
