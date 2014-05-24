@@ -18,7 +18,7 @@
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 0 
+#define DEBUG 1 
 
 #define BUF_SIZE 64000
 
@@ -153,7 +153,7 @@ static void catch_int (int sig) {
     if (DEBUG) printf("Czeka na zakonczenie watkow\n");
     wait_for(&report_thread);
     wait_for(&udp_thread);
-    pthread_cancel(event_thread);
+    pthread_cancel(&event_thread);
     free_clients();
     
   	
@@ -346,7 +346,7 @@ void * send_a_report(void * arg) {
                 int offset = strlen(report);
                 int report_line = 200;
                 char tmp[report_line];
-                sprintf(tmp, "[%s:%d] FIFO: %zu/%d (min. %lu, max. %lu)\n",
+                sprintf(tmp, "[%s:%d] FIFO: %zu/%d (min. %d, max. %d)\n",
                          clients[i].str_address, 
                          ntohs(clients[i].address.sin6_port),
                          strlen(buf_FIFO[i]), 
@@ -633,7 +633,7 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         syserr("Bledny datagram poczatkowy\n");
 }
 
-void * process_datagram(datagram_address *param) {
+void * process_datagram(void *param) {
 /*    //datagram_address da = *(datagram_address*)param;
     //char *datagram = da.datagram;
     //struct in6_addr sin_addr = da.sin_addr;
@@ -658,8 +658,6 @@ void * process_datagram(datagram_address *param) {
     //printf("process datagram param: %p\n",param );
     //printf("(datagram_address*)param : %p\n",(datagram_address*)param );
 
- /*TA WERSJA JEST NIBY OK 
-
     if (DEBUG) printf("process_datagram, datagram: %s\n", ((datagram_address*)param)->datagram);
     int clientid = get_clientid(((datagram_address*)param)->sin_addr, ((datagram_address*)param)->sin_port);
     if (clientid < 0) {
@@ -682,29 +680,18 @@ void * process_datagram(datagram_address *param) {
     return 0; 
     
 
-*/
 
 
-/* wersja bez watkow oddzielnych*/
-    int clientid = get_clientid(param->sin_addr, (param->sin_port));
-    if (clientid < 0) {
-        //klienta nie ma w tabeli, jesli datagram jest typu CLIENT, trzeba go dodac 
-        add_new_client(param->datagram, param->sin_addr, param->sin_port);
-    }
-    else {
-        match_and_execute(param->datagram, clientid);
-    } 
 
 
-    //printf("process datagram (datagram_address*)param)->datagram: %p\n",((datagram_address*)param)->datagram );
-    //po adresach wydaje sie wszytsko dobrze..
 
-    //free(((datagram_address*)param)->datagram); //to faktycznie zwalnia te pamiec zaalokowana w udp, wskaznik na to samo
-    //free(param);// tego juz nie alokuje
-    //free(&da); 
-    //void* ret = NULL;
-    //pthread_exit(&ret); 
-    return 0; 
+
+
+
+
+
+
+
 }
 
 void create_processing_thread(datagram_address* arg) {
@@ -773,7 +760,7 @@ void * read_from_udp(void * arg) {
                 //if (DEBUG) printf("DATAGRAM: %s\n", datagram);
                  
                 //musze zaalokowac strukture dla kazdego watku na nowo    
-   /*             struct datagram_address *da = malloc(sizeof(datagram_address));
+                struct datagram_address *da = malloc(sizeof(datagram_address));
                 memset(da, 0, sizeof(datagram_address)); // TODO: to jest dziwne..
 
                 da->datagram = malloc(strlen(datagram));
@@ -786,23 +773,24 @@ void * read_from_udp(void * arg) {
                 da->sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
 
                 printf("read from udp da: %p\n",da );
-                //create_processing_thread(da); */
-               
+                create_processing_thread(da); 
 
-                /* werjsa bez watkow */
+                 
+                
+/*
+                struct datagram_address da;
+                da.datagram = malloc(strlen(datagram));
+                memset(da.datagram, 0, strlen(datagram));
+                memcpy(da.datagram, datagram, strlen(datagram));
 
-                char d[len];
-                memset(d, 0, len);
-                memcpy(d, datagram, len);             
+                da.sin_addr = client_udp.sin6_addr;
+                da.sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
 
-                int clientid = get_clientid(client_udp.sin6_addr, ntohs(client_udp.sin6_port));
-                if (clientid < 0) {
-                    //klienta nie ma w tabeli, jesli datagram jest typu CLIENT, trzeba go dodac 
-                    add_new_client(d, client_udp.sin6_addr, ntohs(client_udp.sin6_port));
-                }
-                else {
-                    match_and_execute(d, clientid);
-                } 
+                printf("read from udp da: %p\n",&da );
+
+                create_processing_thread(&da);            
+*/
+
 
 
             }
@@ -945,7 +933,7 @@ void mix_and_send() {
     if (DEBUG) printf("Zrobiles free, ide spac\n");
     //idz spac na interval ms TODO: zmienic zakres
     struct timespec tim, tim2;
-    tim.tv_sec = 0; //0s
+    tim.tv_sec = 1; //0s
     tim.tv_nsec = interval *1000000; //interval ms
    // tim.tv_nsec = 0;
     nanosleep(&tim, &tim2); 
@@ -1030,7 +1018,7 @@ int main (int argc, char *argv[]) {
     create_thread(&send_a_report);
 
     for (;;) {
-        //mix_and_send();
+        mix_and_send();
     }   
 
     //TODO: free wszystko co mallocowalas
