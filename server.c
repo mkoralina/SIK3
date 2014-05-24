@@ -580,7 +580,7 @@ void match_and_execute(char *datagram, int clientid) {
         }
         
     }
-    else if (strcmp(datagram, "KEEPALIVE") == 0) {
+    else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
         if (DEBUG) printf("Zmatchowano do KEEPALIVE\n");
         //TODO : udpate czasu ostatniej wiadomosci od klienta
     }
@@ -627,7 +627,7 @@ void * process_datagram(void *param) {
     } 
     free(da.datagram);
     //free(((datagram_address*)param)->datagram);
-    free(param);
+    //free(param);
     //free(&da);  
     return 0;    
 }
@@ -688,7 +688,7 @@ void * read_from_udp(void * arg) {
                 //        (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
                 //if (DEBUG) printf("DATAGRAM: %s\n", datagram);
                  
-                
+                /*    
                 struct datagram_address *da= malloc(sizeof(datagram_address));
                 memset(da, 0, sizeof(datagram_address)); // TODO: to jest dziwne..
 
@@ -700,7 +700,18 @@ void * read_from_udp(void * arg) {
 
                 da->sin_addr = client_udp.sin6_addr;
                 da->sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
-                create_processing_thread(da);               
+                create_processing_thread(da); 
+
+                */  
+
+                struct datagram_address da;
+                da.datagram = malloc(strlen(datagram));
+                memset(da.datagram, 0, strlen(datagram));
+                memcpy(da.datagram, datagram, strlen(datagram));
+
+                da.sin_addr = client_udp.sin6_addr;
+                da.sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
+                create_processing_thread(&da);            
 
 
 
