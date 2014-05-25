@@ -145,6 +145,13 @@ void free_clients() {
         
 }
 
+void cancel_event_thread() {
+    event_free(listener_socket_event);
+    event_base_free(base); 
+    event_thread = 0;
+    pthread_cancel(event_thread);
+}
+
 
 /* Obsługa sygnału kończenia */
 static void catch_int (int sig) {
@@ -153,7 +160,7 @@ static void catch_int (int sig) {
     if (DEBUG) printf("Czeka na zakonczenie watkow\n");
     wait_for(&report_thread);
     wait_for(&udp_thread);
-    pthread_cancel(event_thread);
+    cancel_event_thread();
     free_clients();
     
   	
@@ -715,9 +722,11 @@ void * read_from_udp(void * arg) {
 
 
             else {
-                (void) printf("read through UDP from [adres:%d]: %zd bytes: %.*s\n", ntohs(client_udp.sin6_port), len,
-                        (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
-                printf("DATAGRAM: %s\n", datagram);
+                if (DEBUG) {
+                    (void) printf("read through UDP from [adres:%d]: %zd bytes: %.*s\n", ntohs(client_udp.sin6_port), len,
+                            (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
+                    printf("DATAGRAM: %s\n", datagram);
+                }    
                  
                 //musze zaalokowac strukture dla kazdego watku na nowo    
                 struct datagram_address *da = malloc(sizeof(datagram_address));
@@ -731,24 +740,6 @@ void * read_from_udp(void * arg) {
                 da->sin_port = ntohs(client_udp.sin6_port); 
 
                 create_processing_thread(da); 
-
-                 
-                /* bez alokowania nakladaja sie na stare datagramy 
-
-                struct datagram_address da;
-                da.datagram = malloc(strlen(datagram));
-                memset(da.datagram, 0, strlen(datagram));
-                memcpy(da.datagram, datagram, strlen(datagram));
-
-                da.sin_addr = client_udp.sin6_addr;
-                da.sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
-
-                printf("read from udp da: %p\n",&da );
-
-                create_processing_thread(&da);            
-                */
-
-
 
             }
         } while (len > 0 && !finish); //dlugosc 0 jest ciezko uzyskac
@@ -813,67 +804,33 @@ void mix_and_send() {
     struct mixer_input inputs[MAX_CLIENTS] = {{0}};
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
-   // char * output = malloc(target_size);
-   // memset(output, 0, target_size);
-
 
     char out[BUF_SIZE];
     size_t out_size = BUF_SIZE;
-
-    //void * output_buf = (void *) output;
-    //memset(output_buf, 0, sizeof(output_buf));
 
     int i;
     
     for(i = 0; i < MAX_CLIENTS; i++) {
         //jesli klient jest w systemie i jego kolejka aktywna
-        if(clients[i].ev) {
+        if(clients[i].ev) { //TODO
         //if(clients[i].ev && client_info[i].buf_state == ACTIVE){
             
             /* opcja bez kopiowania */
             inputs[num_of_clients].data = (void *) buf_FIFO[i];
             inputs[num_of_clients].len = strlen(buf_FIFO[i]);
             num_of_clients++;
-
-            
-
-
-
-/*            struct mixer_input input;
-            input.data = malloc(target_size);
-
-            //printf("Po mallocu input.data %d : %p\n",i,input.data);
-            memset(input.data, 0, 176*interval);
-            //memcpy(input.data, buf_FIFO[i], strlen(buf_FIFO[i]));
-            memcpy((char *)input.data, buf_FIFO[i], strlen(buf_FIFO[i]));
-            
-            //printf("buf_FIFO[%d]: %s\n",i,buf_FIFO[i]);
-            //printf("input.data: %s\n", (char *) input.data);
-
-
-            //po skopiowaniu zawartosci do input moge update'owac bufor
-            int offset = min(strlen(buf_FIFO[i]),target_size);
-            memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
-            memset(&buf_FIFO[i][offset], 0, offset);
-            update_min_max(i, strlen(buf_FIFO[i]));
-
-            input.len = strlen(buf_FIFO[i]);
-            add_to_inputs(inputs, input, &num_of_clients); */
         }
     }
   
 
     if (num_of_clients) 
-       // mixer(inputs, num_of_clients, output,                      
-       //     &output_size, interval); 
        mixer(inputs, num_of_clients, out, &out_size, interval);  
 
-    /*gdy nie kopiuje, update pozniej*/
+    /*update buforow*/
     for(i = 0; i < MAX_CLIENTS; i++) 
         //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev) {
-
-            int offset = min(strlen(buf_FIFO[i]),target_size);
+            int offset = min(strlen(buf_FIFO[i]),out_size);
             memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
             memset(&buf_FIFO[i][offset], 0, offset);
             update_min_max(i, strlen(buf_FIFO[i]));
@@ -883,24 +840,16 @@ void mix_and_send() {
     //output = (char *) output_buf;
     //printf("output_buf: %s\n",output_buf);
     //printf("output: %s\n",output);
-   // printf("output_size: %zu\n", output_size);
+    //printf("output_size: %zu\n", out_size);
 
     send_data(out, out_size);
-    //zwolnij zasoby 
-    //free(output); //ok, sprawdzone
-
-   // for (i = 0; i < num_of_clients; i++) {
-   //     free(inputs[i].data);
-   // }
 
     if (DEBUG) printf("Zrobiles free, ide spac\n");
     //idz spac na interval ms TODO: zmienic zakres
     struct timespec tim, tim2;
     tim.tv_sec = 0; //0s
     tim.tv_nsec = interval *1000000; //interval ms
-   // tim.tv_nsec = 0;
     nanosleep(&tim, &tim2); 
-
 }
 
 
@@ -914,7 +863,6 @@ void set_event_TCP() {
     if(listener_socket == -1 ||
         evutil_make_listen_socket_reuseable(listener_socket) ||
         evutil_make_socket_nonblocking(listener_socket)) { 
-        //gniazdo zwroci blad, jesli nie ma danych do odczytu (dlatego, ze mamy pod tym funkcje poll ktora nam zwraca, kiedy sa dane, wiec powinny byc
         syserr("Error preparing socket.");
     }
 
@@ -984,15 +932,10 @@ int main (int argc, char *argv[]) {
         mix_and_send();
     }   
 
-    //TODO: free wszystko co mallocowalas
-       
 	return 0;
 }
 
 /* TODO:
-
-0) NAJWAZNEIJSZE:
-    czytanie z buforów, czyszczenie! tak, zeby można było dosyłać -> zmniejszanie win po wczytaniu do mix_send
 
 
 1) W przypadku wykrycia kłopotów z połączeniem przez serwer, powinien on zwolnić wszystkie zasoby związane z tym klientem
@@ -1011,7 +954,6 @@ uwaga! to sie tylko dotyczy TCP!
 
    ale tez updateowac te czasy przy odbiorze keepalive (bo to wystarczy)
 
-UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW
 
 3) ucinanie adresow IPv4 do swojej dlugosci z IPv6
 
@@ -1023,9 +965,4 @@ UWAGA: BURDEL ZE ZWALNIANIEM ZASOBOW i ZABIJANIEM WATKOW
 
 7) poprawic styl retransmisji
 
-
-
-
-
-8) uwaga na watki obsługujące datagramy create_UDP_thread bo one sa detached
 */
