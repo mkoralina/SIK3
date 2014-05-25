@@ -341,7 +341,7 @@ void read_CLIENT_datagram(struct bufferevent *bev, void *arg) {
         }
     }
     send_CLIENT_datagram(clientid);  
-    //create_thread(&send_KEEEPALIVE_datagram); 
+    create_thread(&send_KEEEPALIVE_datagram); 
 }
 
 /* Funkcja czyta z TCP, wyrzuca raporty na stder */

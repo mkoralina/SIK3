@@ -67,6 +67,7 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     for (i = 0; i < n; i++) {
         //tutaj musze alokowac pamiec? jesli to jest tylko castowanie? to ma wskaxnik chyba tylko, nie?
         int_input[i] = (int16_t *) inputs[i].data;
+        inputs[i].consumed = min (strlen(inputs[i].data), target_size); 
     }
 
     int16_t * int_output_buf = (int16_t *) output_buf;
@@ -95,6 +96,7 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     //printf("output_buf w mixerze: %s\n",output_buf);
 
     *output_size  = strlen((char *)output_buf); 
+    printf("output_size: %d\n",*output_size );
 }
 
 

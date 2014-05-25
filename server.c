@@ -18,7 +18,7 @@
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 1 
+#define DEBUG 0 
 
 #define BUF_SIZE 64000
 
@@ -274,7 +274,7 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
 
 //nieprzetestowane
 void send_DATA_datagram(char *data, int no, int ack, int win, int clientid) {
-    printf("send_DATA_datagram\n");
+    if (DEBUG) printf("send_DATA_datagram\n");
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
     int str_no_size = (int) ((ceil(log10(num))+1)*sizeof(char));
@@ -609,7 +609,8 @@ void match_and_execute(char *datagram, int clientid) {
     }
     else 
         //syserr("Niewlasciwy format datagramu"); //ew. TODO: wypisuj inaczej
-        if (DEBUG) printf("Niewlasciwy format datagramu\n");
+        printf("Niewlasciwy format datagramu\n");
+        printf("datagram: %s\n",datagram);
 
 } 
     
@@ -760,7 +761,7 @@ void * read_from_udp(void * arg) {
                 //if (DEBUG) printf("DATAGRAM: %s\n", datagram);
                  
                 //musze zaalokowac strukture dla kazdego watku na nowo    
-                struct datagram_address *da = malloc(sizeof(datagram_address));
+           /*     struct datagram_address *da = malloc(sizeof(datagram_address));
                 memset(da, 0, sizeof(datagram_address)); // TODO: to jest dziwne..
 
                 da->datagram = malloc(strlen(datagram));
@@ -772,12 +773,12 @@ void * read_from_udp(void * arg) {
                 da->sin_addr = client_udp.sin6_addr;
                 da->sin_port = ntohs(client_udp.sin6_port); //UWAGA BO TO ZMIENIAM, A TEGO NA GORZE NIE
 
-                printf("read from udp da: %p\n",da );
+                if (DEBUG) printf("read from udp da: %p\n",da );
                 create_processing_thread(da); 
-
+*/
                  
                 
-/*
+
                 struct datagram_address da;
                 da.datagram = malloc(strlen(datagram));
                 memset(da.datagram, 0, strlen(datagram));
@@ -789,7 +790,7 @@ void * read_from_udp(void * arg) {
                 printf("read from udp da: %p\n",&da );
 
                 create_processing_thread(&da);            
-*/
+
 
 
 
@@ -816,16 +817,20 @@ void print_inputs(struct mixer_input* inputs, size_t * size) {
 }
 
 //wysylam dane do wszystkich klientow
-void send_data(char * data) {
-    if (DEBUG) printf("send_data\n");
+void send_data(char * data, size_t size) {
+    if (DEBUG) printf("send_data\n");    
     int i;
     int anyone_inside = 0;
+
+    char * d = malloc(size);
+    memcpy(d, data, size);
+
     //przesylam do wszytskich klientow w systemie
     for(i = 0; i < MAX_CLIENTS; i++) {
         if(clients[i].ev && activated[i]) {
             int win = fifo_queue_size - strlen(buf_FIFO[i]);
-            printf("Z send_data:\n");
-            send_DATA_datagram(data, last_nr, client_info[i].ack, win, i);   
+            if (DEBUG) printf("Z send_data:\n");
+            send_DATA_datagram(d, last_nr, client_info[i].ack, win, i);   
             anyone_inside = 1;         
         }    
     } 
@@ -853,6 +858,10 @@ void mix_and_send() {
     char * output = malloc(target_size);
     memset(output, 0, target_size);
 
+
+    char out[BUF_SIZE];
+    size_t out_size = BUF_SIZE;
+
     void * output_buf = (void *) output;
     //memset(output_buf, 0, sizeof(output_buf));
 
@@ -863,33 +872,17 @@ void mix_and_send() {
         //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev) {
         //if(clients[i].ev && client_info[i].buf_state == ACTIVE){
-
-/* NIC TO NIE ZMIENIA  
-          struct mixer_input *input = malloc(sizeof(struct mixer_input)); 
-            input->data = malloc(target_size);
-
-            //printf("Po mallocu input.data %d : %p\n",i,input.data);
-            memset(input->data, 0, 176*interval);
-            //memcpy(input.data, buf_FIFO[i], strlen(buf_FIFO[i]));
-            memcpy((char *)input->data, buf_FIFO[i], strlen(buf_FIFO[i]));
             
-            //printf("buf_FIFO[%d]: %s\n",i,buf_FIFO[i]);
-            //printf("input.data: %s\n", (char *) input.data);
+            /* opcja bez kopiowania */
+            inputs[num_of_clients].data = (void *) buf_FIFO[i];
+            inputs[num_of_clients].len = strlen(buf_FIFO[i]);
+            num_of_clients++;
 
-
-            //po skopiowaniu zawartosci do input moge update'owac bufor
-            int offset = min(strlen(buf_FIFO[i]),target_size);
-            memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
-            memset(&buf_FIFO[i][offset], 0, offset);
-            update_min_max(i, strlen(buf_FIFO[i]));
-
-            input->len = strlen(buf_FIFO[i]);
-            add_to_inputs(inputs, *input, &num_of_clients);
-*/
+            
 
 
 
-            struct mixer_input input;
+/*            struct mixer_input input;
             input.data = malloc(target_size);
 
             //printf("Po mallocu input.data %d : %p\n",i,input.data);
@@ -908,21 +901,34 @@ void mix_and_send() {
             update_min_max(i, strlen(buf_FIFO[i]));
 
             input.len = strlen(buf_FIFO[i]);
-            add_to_inputs(inputs, input, &num_of_clients);
+            add_to_inputs(inputs, input, &num_of_clients); */
         }
     }
   
 
     if (num_of_clients) 
-        mixer(inputs, num_of_clients, output,                      
-            &output_size, interval);   
+       // mixer(inputs, num_of_clients, output,                      
+       //     &output_size, interval); 
+       mixer(inputs, num_of_clients, out, &out_size, interval);  
+
+    /*gdy nie kopiuje, update pozniej*/
+    for(i = 0; i < MAX_CLIENTS; i++) 
+        //jesli klient jest w systemie i jego kolejka aktywna
+        if(clients[i].ev) {
+
+            int offset = min(strlen(buf_FIFO[i]),target_size);
+            memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
+            memset(&buf_FIFO[i][offset], 0, offset);
+            update_min_max(i, strlen(buf_FIFO[i]));
+        }
+
 
     output = (char *) output_buf;
     //printf("output_buf: %s\n",output_buf);
     //printf("output: %s\n",output);
    // printf("output_size: %zu\n", output_size);
 
-    send_data(output);
+    send_data(out, out_size);
     //zwolnij zasoby 
     free(output); //ok, sprawdzone
 
@@ -933,7 +939,7 @@ void mix_and_send() {
     if (DEBUG) printf("Zrobiles free, ide spac\n");
     //idz spac na interval ms TODO: zmienic zakres
     struct timespec tim, tim2;
-    tim.tv_sec = 1; //0s
+    tim.tv_sec = 0; //0s
     tim.tv_nsec = interval *1000000; //interval ms
    // tim.tv_nsec = 0;
     nanosleep(&tim, &tim2); 
