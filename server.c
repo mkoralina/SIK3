@@ -18,7 +18,7 @@
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 0 
+#define DEBUG 1 
 
 #define BUF_SIZE 64000
 
@@ -296,12 +296,18 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid) {
     char str_win[str_win_size];
     sprintf(str_win, "%d", win);
 
+if (DEBUG) printf("send_DATA_datagram KONIEC\n");
+
     char* type= "DATA";
     char* datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 5 + strlen(data));
 
+
+
     sprintf(datagram, "%s %s %s %s\n%s", type, str_no, str_ack, str_win, data);
     send_datagram(datagram, clientid);
+    
     free(datagram);
+
 }
 
 void send_ACK_datagram(int ack, int win, int clientid) {
@@ -674,7 +680,7 @@ void * process_datagram(void *param) {
     //po adresach wydaje sie wszytsko dobrze..
 
     free(((datagram_address*)param)->datagram); //to faktycznie zwalnia te pamiec zaalokowana w udp, wskaznik na to samo
-    free(param);// tego juz nie alokuje
+
     //free(&da); 
     void* ret = NULL;
     pthread_exit(&ret); 
@@ -844,6 +850,7 @@ void send_data(char * data, size_t size) {
         //zwykle server_FIFO nie pokazuje calosci, bo zatrzymuje sie na pierwszym \0
         last_nr++;
     }
+    free(d);
     if (DEBUG) printf("Wychodzi z send_data\n");  
 }
 
@@ -855,14 +862,14 @@ void mix_and_send() {
     struct mixer_input inputs[MAX_CLIENTS] = {{0}};
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
-    char * output = malloc(target_size);
-    memset(output, 0, target_size);
+   // char * output = malloc(target_size);
+   // memset(output, 0, target_size);
 
 
     char out[BUF_SIZE];
     size_t out_size = BUF_SIZE;
 
-    void * output_buf = (void *) output;
+    //void * output_buf = (void *) output;
     //memset(output_buf, 0, sizeof(output_buf));
 
     size_t output_size = 0;
@@ -923,18 +930,18 @@ void mix_and_send() {
         }
 
 
-    output = (char *) output_buf;
+    //output = (char *) output_buf;
     //printf("output_buf: %s\n",output_buf);
     //printf("output: %s\n",output);
    // printf("output_size: %zu\n", output_size);
 
     send_data(out, out_size);
     //zwolnij zasoby 
-    free(output); //ok, sprawdzone
+    //free(output); //ok, sprawdzone
 
-    for (i = 0; i < num_of_clients; i++) {
-        free(inputs[i].data);
-    }
+   // for (i = 0; i < num_of_clients; i++) {
+   //     free(inputs[i].data);
+   // }
 
     if (DEBUG) printf("Zrobiles free, ide spac\n");
     //idz spac na interval ms TODO: zmienic zakres
