@@ -50,13 +50,17 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
     int16_t * int_input[n];
 
-    int target_size = 176 * tx_interval_ms; //jeszcze sprawdzic, czy to nie jest wieksze od fifo_queue_size w ogóle
-    //TODO: faktycznie, żeby robil te wielkosc, bo teraz nie robi jak jest za malo danych:/ (inna rzecz, ze nie powinno byc raczej)
+    
 
     int i;
     long long int j;
 
 
+    int target_size = 176 * tx_interval_ms; 
+    if (target_size > *output_size) {
+        perror("Bufor do miksera jest za maly");
+        target_size = *output_size;
+    }
 
     //inicjalizacja na zera?
     //for (i = 0; i < n; i++) {
@@ -85,83 +89,5 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
         }
         int_output_buf[j] = sum;
     }
-
-    //ustalam wartosci consumed 
-    for (i = 0; i < n; i++) {
-        inputs[i].consumed = min (strlen(inputs[i].data), target_size); 
-    }
-
-
-
-    //printf("output_buf w mixerze: %s\n",output_buf);
-
-    *output_size  = strlen((char *)output_buf); 
-    printf("output_size: %d\n",*output_size );
+    *output_size  = target_size;
 }
-
-
-/* BRUDNOPIS:
-
-    //char * output = (char *) output_buf;
-
-    //char * tmp = "moj nowy tekst";
-    //memcpy(&output_buf[0], tmp, strlen(tmp));
-
-    //printf("POINTERS in MIXER:\n");
-    //printf("output_buf: %p\n",output_buf);
-    //printf("inputs[1].data: %p\n",inputs[1].data);
-    //printf("inputs[0].data: %p\n",inputs[0].data);
-    //output_buf = inputs[0].data;
-
-    /*
-    printf("inputs[0].data w mixerze przed: %s\n",inputs[0].data);
-
-    char * nowe = (char *) inputs[0].data;
-    nowe = "babcia";
-    memcpy((char*)inputs[0].data, "babcia", strlen("babcia"));
-    
-    printf("inputs[0].data w mixerze po: %s\n",inputs[0].data);    
-    */
-
-    //printf("Po zerach inputs[0] = %s\n", (char*)inputs[0].data);
-    //printf("strlen(0): %d\n",strlen("0"));
-
-    //output = inputs[0].data;
-    //printf("output w mixerze: %s\n", output);
-
-
-
-
-    //int num_of_nums = target_size/sizeof(num); 
-
-    //void * pom = inputs[0].data;
-    //inputs[0].data = inputs[1].data;
-    //inputs[1].data = "ocniczy";
-
-    //atrapa:
-    //output = inputs[0].data;
-    //printf("outpus w mixerze: %s\n", output);
-
-    //char * nowe = (char *) inputs[0].data;
-    //memset(inputs[0].data, 0, strlen((char*)inputs[0].data));
-    //nowe = "babcia";
-    //memcpy((char*)inputs[0].data, "babcia", strlen("babcia"));
-    //printf("BABCIA\n");
-    //printf("Po babci, inputs[0] = %s\n", (char*)inputs[0].data);
-
-
-
-   //   
-    /*    //TODO:
-        int j;
-        for (j = 0; j < n; j++) {
-            //jesli jest ta liczba, to
-            //value += inputs[j][i]; //przy czym to ma byc BINARNIE ! wiec moze jakies binarne dodawanie
-            //jesli nie ma, to jest 0, czyli nie wplywa na sume
-        }
-        output[i] = "a";
-    */
-   // }
-    //output_buf = (void *) output;
-    //printf("output_buf w mixerze: %s\n", (char *) output_buf);
-     //ALE JESZCZE SA PRZENIESIENIA, NO GENERALNIE TO JEST XLE NAPISANE
