@@ -10,7 +10,6 @@
 #define FIFO_SIZE 10560 //rozmiar w bajtach kolejki FIFO, którą serwer utrzymuje dla każdego z klientów; ustawiany parametrem -F serwera
 #define FIFO_LOW_WATERMARK 0 //ustawiany parametrem -L serwera
 #define BUF_LEN 10 //rozmiar (w datagramach) bufora pakietów wychodzących, ustawiany parametrem -X serwera
- // TODO zmienic na 5
 #define TX_INTERVAL 5 //czas (w ms) pomiędzy kolejnymi wywołaniami miksera, ustawiany parametrem -i serwera 
 #define QUEUE_LENGTH 5 //liczba kleintow w kolejce do gniazda
 #define MAX_CLIENTS 30 
@@ -378,7 +377,7 @@ void * send_a_report(void * arg) {
         }   
 
         struct timespec tim, tim2;
-        tim.tv_sec = 10; //1s
+        tim.tv_sec = 1; //1s
         tim.tv_nsec = 0; //0
         nanosleep(&tim, &tim2); 
     }  
@@ -529,6 +528,10 @@ void match_and_execute(char *datagram, int clientid) {
     char data[BUF_SIZE+1] = { 0 };
     if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 1) {
         if (DEBUG) printf("Zmatchowano do UPLOAD, nr = %d, dane = %s\n",nr, data);
+
+
+        write(1,data,strlen(data));
+
 
         int win = fifo_queue_size - strlen(buf_FIFO[clientid]);
         int offset = fifo_queue_size - win;

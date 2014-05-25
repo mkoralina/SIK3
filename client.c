@@ -47,14 +47,14 @@
 #define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
 #endif
 
+#ifndef min
+#define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
+#endif 
+
+
 #define PORT 14666
-
-#define BUF_SIZE 64000 
-
- 
-#define BUFFER_SIZE 1024
-#define NAME_SIZE 1000 //ile to ma byc?
-
+#define BUF_SIZE 150 
+#define NAME_SIZE 100 //TODO: ile to ma byc?
 #define RETRANSMIT_LIMIT 10 
 #define DATAGRAM_SIZE 10000 
 
@@ -154,10 +154,10 @@ void reboot() {
     wait_for(&keepalive_thread);
     wait_for(&event_thread);
 
-    //wait 300ms
+    //wait 500ms
     struct timespec tim, tim2;
-    tim.tv_sec = 5; //5s
-    tim.tv_nsec = 0; 
+    tim.tv_sec = 0;
+    tim.tv_nsec = 500 * 1000000; 
     nanosleep(&tim, &tim2); 
     //reopen
     main_loop();
@@ -280,11 +280,9 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
 
     // TODO: doczytaj jeszcze jak to jest z tymi numerami
     if (ack > last_sent && win > 0) {
-    //if (win > 0) {   
-        //sleep(1); 
         printf("read\n");
-
-        int r = read(descriptor, buf, win);
+        int to_read = min(win, BUF_SIZE);
+        int r = read(descriptor, buf, to_read);
         if(r < 0) {
             perror("w evencie: read (from stdin)");
             finish = TRUE;
@@ -310,7 +308,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
             printf("send_UPLOAD_datagram( dl: %zu,nr: %d)\n", strlen(buf),last_sent);
             send_UPLOAD_datagram(buf, last_sent);                
         }
-        
+        memset(buf, 0, sizeof(buf));
  
     }   
      
@@ -442,9 +440,13 @@ void match_and_execute(char *datagram) {
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
     if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
         DATAs_since_last_datagram++;
+        // TODO: malloc, free, blad na retransmisji
+        /* *** Error in `./client': free(): invalid next size (fast): 0x0000000000cbf0f0 ***
+           *** Error in `./client': malloc(): memory corruption: 0x0000000000cbf110 ***
+        */
         if (DATAs_since_last_datagram > 1 && last_sent >= 0 && last_sent == ack) {
             if (DEBUG) printf("RETRANSMISJA KLIENT -> SERWER\n");
-            send_UPLOAD_datagram(last_datagram, last_sent);
+            //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac
             DATAs_since_last_datagram = 0;
         }
         if (DEBUG) {
