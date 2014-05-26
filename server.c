@@ -19,7 +19,7 @@
 
 #define DEBUG 0 
 
-#define BUF_SIZE 64000
+#define BUF_SIZE 64000 //TODO: 64 000
 
 
 //popraw typy jeszcze
@@ -65,6 +65,7 @@ typedef struct datagram_address {
     char * datagram;
     struct in6_addr sin_addr;
     unsigned short sin_port;
+    int len;
 } datagram_address;
 
 struct info client_info[MAX_CLIENTS];
@@ -521,7 +522,7 @@ void update_min_max(int i, long long int size) {
 
 
 
-void match_and_execute(char *datagram, int clientid) {
+void match_and_execute(char *datagram, int clientid, int len) {
     if (strlen(datagram) == 0) syserr("bledne wejscie dla match_and_execute");
     if (DEBUG) printf("match_and_execute: %s\n",datagram);
     int nr;    
@@ -529,9 +530,18 @@ void match_and_execute(char *datagram, int clientid) {
     if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 1) {
         if (DEBUG) printf("Zmatchowano do UPLOAD, nr = %d, dane = %s\n",nr, data);
 
+        int num = nr;
+        if (!nr) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+        int nr_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+        int header_size = strlen("UPLOAD") + nr_size + 1;
+        int size = len - header_size -1;
 
-        write(1,data,strlen(data));
-
+        //DEBUG: sprawdzam, czy dobrze dochodza dane do serwera od klienta
+        //fprintf(stdout, "%*s\n",150,data );
+        //write(1,data,len - header_size -1); //z strlen(data) nie dziala, DZIALA Z LEKKIMI TRZASKAMI, 100 - gra szybciej, 200 wolniej
+        //write(2,data, 150);
+        fprintf(stderr, "len - header_size -1: %d\n",len - header_size -1); //czasami trace jakies dane.. wiecej niz 12 bajtow na UPLOAD i liczbe, teraz też? juz ie, zawsze 150 praktycznie
+        fprintf(stderr, "strlen(data): %d\n",strlen(data) );
 
         int win = fifo_queue_size - strlen(buf_FIFO[clientid]);
         int offset = fifo_queue_size - win;
@@ -655,7 +665,8 @@ void * process_datagram(void *param) {
     }
     else {
         match_and_execute(((datagram_address*)param)->datagram, 
-            clientid);
+            clientid,
+            ((datagram_address*)param)->len);
     } 
 
     free(((datagram_address*)param)->datagram);
@@ -716,7 +727,9 @@ void * read_from_udp(void * arg) {
             socklen_t rcva_len = (ssize_t) sizeof(client_udp);
 
             len = recvfrom(sock_udp, datagram, BUF_SIZE, flags,
-                    (struct sockaddr *) &client_udp, &rcva_len); 
+                    (struct sockaddr *) &client_udp, &rcva_len);
+
+            fprintf(stderr, "len = %d",len); // TODO         
 
             if (len < 0) {
                 //klopotliwe polaczenie z serwerem
@@ -735,12 +748,13 @@ void * read_from_udp(void * arg) {
                 struct datagram_address *da = malloc(sizeof(datagram_address));
                 memset(da, 0, sizeof(datagram_address)); // TODO: to jest dziwne..
 
-                da->datagram = malloc(strlen(datagram)+1); // na \0 (wpp invalid read of size 1)
-                memset(da->datagram, 0, strlen(datagram)+1);
-                memcpy(da->datagram, datagram, strlen(datagram));
+                da->datagram = malloc(len+1); // na \0 (wpp invalid read of size 1)
+                memset(da->datagram, 0, len+1);
+                memcpy(da->datagram, datagram, len);
 
                 da->sin_addr = client_udp.sin6_addr;
-                da->sin_port = ntohs(client_udp.sin6_port); 
+                da->sin_port = ntohs(client_udp.sin6_port);
+                da->len = len; 
 
                 create_processing_thread(da); 
 
@@ -768,6 +782,11 @@ void print_inputs(struct mixer_input* inputs, size_t * size) {
 
 //wysylam dane do wszystkich klientow
 void send_data(char * data, size_t size) {
+
+    //DEBUG: sprawdzam, czy dzwiek jest dobry na tym etapie
+    //if (size) write(1,data,size); //
+    //fprintf(stderr, "size: %d",size);
+
     if (DEBUG) printf("send_data\n");    
     int i;
     int anyone_inside = 0;
@@ -827,7 +846,8 @@ void mix_and_send() {
   
 
     if (num_of_clients) 
-       mixer(inputs, num_of_clients, out, &out_size, interval);  
+       mixer(inputs, num_of_clients, out, &out_size, interval); 
+    else out_size = 0;    
 
     /*update buforow*/
     for(i = 0; i < MAX_CLIENTS; i++) 

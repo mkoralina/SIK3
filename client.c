@@ -164,13 +164,26 @@ void reboot() {
 }
 
 
-void send_datagram(char *datagram) {
+void send_datagram(char *datagram, int len) {
+    fprintf(stderr, "datagram: %s\n",datagram );
+
     ssize_t snd_len;
     int flags = 0;
-    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
-            (struct sockaddr *) &my_address, rcva_len);    
+//    snd_len = sendto(sock_udp, datagram, strlen(datagram), flags,
+//            (struct sockaddr *) &my_address, rcva_len); 
+
+    //DEBUG:
+   /* int nr; char data[BUF_SIZE+1] = {0};
+    if (sscanf(datagram, "UPLOAD %d %[^\n]", &nr, data) >= 1) {
+        write(1,data,150);
+    }*/
+
+
+    snd_len = sendto(sock_udp, datagram, len, flags,
+            (struct sockaddr *) &my_address, rcva_len);              
     
-    if (snd_len != strlen(datagram)) {
+    if (snd_len != len) {    
+//    if (snd_len != strlen(datagram)) {
         perror("partial / failed sendto");
         free(datagram);
         
@@ -202,11 +215,19 @@ void send_CLIENT_datagram(uint32_t id) {
     char* datagram = malloc(strlen(type) + strlen(clientid) + 3);
 
     sprintf(datagram, "%s %s\n", type, clientid); 
-    send_datagram(datagram);  
+    send_datagram(datagram, strlen(datagram));  
     free(datagram);
 }
 
-void send_UPLOAD_datagram(char *data, int no) {
+
+   
+
+void send_UPLOAD_datagram(char *data, int no, int data_size) {    
+
+    //fprintf(stderr, "data: %*s\n",data_size,data);
+    //write(1,data,data_size);
+
+
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
     int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
@@ -215,14 +236,31 @@ void send_UPLOAD_datagram(char *data, int no) {
     sprintf(str, "%d", no);
 
     char* type= "UPLOAD";
-    char* datagram = malloc(strlen(type) + strlen(str) + 3 + strlen(data)); // na spacje, \n i \0
 
-    sprintf(datagram, "%s %s\n%s", type, str, data);
-    send_datagram(datagram);
+    char* datagram = malloc(strlen(type) + strlen(str) + 3 + data_size); // na spacje, \n i \0
 
-    memset(last_datagram, 0, strlen(last_datagram));
-    memcpy(last_datagram, data, strlen(data));
+    int len = strlen(type) + strlen(str) + 3 + data_size;  
+
+    fprintf(stderr, "data: %s\n",data );
+
     
+    sprintf(datagram, "%s %s\n", type, str);
+    memcpy(datagram + strlen(type) + strlen(str) + 2, data, data_size);
+
+    send_datagram(datagram, len); //TODO 
+    
+    //TODO: 
+    /* gubia sie tutaj dane, to nie jest sobie rowne, a powinno
+    fprintf(stderr, "strlen(type) + strlen(str) + 3 + data_size = %d",strlen(type) + strlen(str) + 3 + data_size); // 
+    fprintf(stderr, "strlen(datagram) = %d",strlen(datagram)); //
+    */
+
+    memset(last_datagram, 0, len);
+    memcpy(last_datagram, data, len);
+
+//    memset(last_datagram, 0, strlen(last_datagram));
+//    memcpy(last_datagram, data, strlen(data));
+    //write(1, data, data_size); dziala tutaj, ale juz duzo wiecej trzaskow, dzwiek wolniej, trzaski duzo szybciej
     free(datagram);    
 }
 
@@ -238,7 +276,7 @@ void send_RETRANSMIT_datagram(int no) {
     char* datagram = malloc(strlen(type) + strlen(str) + 2);
 
     sprintf(datagram, "%s %s\n", type, str);
-    send_datagram(datagram);
+    send_datagram(datagram, strlen(datagram));
     free(datagram);
 }
 
@@ -250,7 +288,7 @@ void * send_KEEEPALIVE_datagram(void * arg) {
         tim.tv_nsec = 100000000; //0.1s
         nanosleep(&tim, &tim2);    
         char *datagram = "KEEPALIVE\n";
-        send_datagram(datagram);
+        send_datagram(datagram, strlen(datagram));
     }
     keepalive_thread = 0;
     return 0;    
@@ -302,11 +340,23 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
                 pthread_exit(&ret);
             }    
         }
-        if (strlen(buf) > 0) {
-            last_sent++;
+        if (r > 0) {
+            //sprawdzam, czy dobrze dzwiek wczytuje i wypluwam go od razu na stdin
+            //write(1,buf,r);
+            //fprintf(stderr, "r = %d",r); // 150
+            //fprintf(stderr, "strlen(buf) = %d",strlen); // 4199616
+            //DZIALA!!
+
+            //fprintf(stderr, "buf: %s\n",buf );
+            last_sent++; 
            // printf("send_UPLOAD_datagram(%s, dl: %d,nr: %d)\n", buf, strlen(buf),last_sent);
-            printf("send_UPLOAD_datagram( dl: %zu,nr: %d)\n", strlen(buf),last_sent);
-            send_UPLOAD_datagram(buf, last_sent);                
+            //printf("send_UPLOAD_datagram( dl: %zu,nr: %d)\n", strlen(buf),last_sent);
+            send_UPLOAD_datagram(buf, last_sent, r); 
+            //fprintf(stderr, "r = %d\n",r); 
+            //fprintf(stderr, "strlen = %d\n",strlen(buf));
+            //write(1, buf, r);
+            
+                         
         }
         memset(buf, 0, sizeof(buf));
  
@@ -446,7 +496,7 @@ void match_and_execute(char *datagram) {
         */
         if (DATAs_since_last_datagram > 1 && last_sent >= 0 && last_sent == ack) {
             if (DEBUG) printf("RETRANSMISJA KLIENT -> SERWER\n");
-            //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac
+            //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac i dopisac rozmiar do parametrow
             DATAs_since_last_datagram = 0;
         }
         if (DEBUG) {
@@ -457,7 +507,7 @@ void match_and_execute(char *datagram) {
         //gdy jest to nasz pierwszy DATA datagram 
         if (nr_expected == -1) {
             nr_expected = nr + 1;
-            printf("%s\n",data);
+            //printf("%s\n",data); // TODO! odkomentowac
         }
         else if (nr > nr_expected) {
             if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {                
@@ -466,12 +516,12 @@ void match_and_execute(char *datagram) {
             else {
                 nr_expected = nr + 1;
                 //przyjmuje dane -> stdout
-                printf("%s",data);
+               // printf("%s",data); //TODO: odkom
             }
         }
         else if (nr == nr_expected) {
             //przyjmij dane
-            printf("%s\n",data);
+           // printf("%s\n",data);//TODO: odkom
         }
         nr_max_seen = max(nr, nr_max_seen);
 
