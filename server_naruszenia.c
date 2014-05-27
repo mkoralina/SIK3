@@ -17,7 +17,7 @@
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 1 
+#define DEBUG 0 
 
 #define BUF_SIZE 64000 //TODO: 64 000
 
@@ -169,9 +169,8 @@ static void catch_int (int sig) {
     if (DEBUG) printf("Czeka na zakonczenie watkow\n");
     wait_for(&report_thread);
     wait_for(&udp_thread);
-    free_clients();
     cancel_event_thread();
-    
+    free_clients();
     
   	
     if (DEBUG) {
@@ -313,16 +312,13 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int 
     sprintf(str_win, "%d", win);
 
     char* type= "DATA";
-    char * datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 4 + data_len);    
-    char * header = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 5);
-    sprintf(header, "%s %s %s %s\n", type, str_no, str_ack, str_win); 
-
-    memcpy(datagram, header, strlen(header));
-    memcpy(datagram + strlen(header), data, data_len);
+    char* datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 4 + data_len); 
+    int len = data_len + strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 4;
+    sprintf(datagram, "%s %s %s %s\n", type, str_no, str_ack, str_win); 
+    memcpy(datagram + strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 4, data, data_len);
     
-    send_datagram(datagram, clientid, data_len + strlen(header));
+    send_datagram(datagram, clientid, len);
     
-    free(header);
     free(datagram);
 
 }
@@ -420,15 +416,15 @@ void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
 
 
     if(inet_ntop(AF_INET6, &sin.sin6_addr, str_addr, sizeof(str_addr))) {
-        if (DEBUG) printf("Adres klienta: %s\n", str_addr);
-        if (DEBUG) printf("Port klienta: %d\n", ntohs(sin.sin6_port));
+        printf("Adres klienta: %s\n", str_addr);
+        printf("Port klienta: %d\n", ntohs(sin.sin6_port));
     }
 
     //chcemy zapisac tego kleinta	
     struct connection_description *cl = get_client_slot();
     if(!cl) {
         close(connection_socket);
-        fprintf(stderr, "get_client_slot, too many clients"); // ew. TODO: wypisuj 
+        printf("get_client_slot, too many clients"); // ew. TODO: wypisuj 
     }
   
     //kopiujemy adres kleinta do struktury
@@ -453,7 +449,7 @@ void init_buf_FIFOs() {
     int i;
     for(i = 0; i < MAX_CLIENTS; i++) {
         buf_FIFO[i] = malloc(fifo_queue_size * sizeof(char));
-        memset(buf_FIFO[i], 0, fifo_queue_size);     
+        memset(buf_FIFO[i], 0, fifo_queue_size * sizeof(char));     
     }         
 }
 
@@ -548,25 +544,20 @@ void match_and_execute(char *datagram, int clientid, int len) {
         int num = nr;
         if (!nr) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
         int nr_size = (int) ((ceil(log10(num))+1)*sizeof(char));
-        int header_size = strlen("UPLOAD") + nr_size + 2;// upload + spacja + nr + \n
-        int size = len - header_size;
+        int header_size = strlen("UPLOAD") + nr_size + 1;
+        int size = len - header_size -1;
 
         //DEBUG: sprawdzam, czy dobrze dochodza dane do serwera od klienta
         //fprintf(stdout, "%*s\n",size,data );
-        write(1,data,size); //DZIALA Z LEKKIMI TRZASKAMI, 100 - gra szybciej, 200 wolniej
+        //write(1,data,size); //DZIALA Z LEKKIMI TRZASKAMI, 100 - gra szybciej, 200 wolniej
         //write(2,data, 150); //wypisuje robaczki jak powinno
-        fprintf(stderr, "len - header_size: %d\n",len - header_size); //czasami trace jakies dane.. wiecej niz 12 bajtow na UPLOAD i liczbe, teraz też? juz ie, zawsze 150 praktycznie
+        fprintf(stderr, "len - header_size -1: %d\n",len - header_size -1); //czasami trace jakies dane.. wiecej niz 12 bajtow na UPLOAD i liczbe, teraz też? juz ie, zawsze 150 praktycznie
         fprintf(stderr, "strlen(data): %d\n",strlen(data) ); //duzo mneijsze niz 150
 
-        
-        if (client_info[clientid].buf_count == fifo_queue_size) {
-            fprintf(stderr, "client_info[clientid].buf_count %d\n",client_info[clientid].buf_count);
-            fprintf(stderr, "size, ktory przewazyl: %d\n",size );
-            syserr("przepelnienie bufora");
-        } 
+ 
+
+        memcpy(&buf_FIFO[clientid][(client_info[clientid].buf_count)], data, size);
         client_info[clientid].buf_count += size;
-        memcpy(buf_FIFO[clientid] + client_info[clientid].buf_count - size, data, size);
-        
 
         update_min_max(clientid, client_info[clientid].buf_count);
 
@@ -576,9 +567,6 @@ void match_and_execute(char *datagram, int clientid, int len) {
         }    
         
         int win = fifo_queue_size - client_info[clientid].buf_count;
-       // if (win < 0) win = 0; // TODO: blad! nie powinno sie pojawic w ogole (wielowatkowosc?)
-        if (DEBUG) printf("send_ACK_datagram(ack, win, clientid): (%d, %d, %d)\n",client_info[clientid].ack, win, clientid );
-        if (DEBUG) printf(" client_info[clientid].buf_count: %d\n", client_info[clientid].buf_count);
         send_ACK_datagram(client_info[clientid].ack, win, clientid);
     }
     else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
@@ -647,8 +635,8 @@ void match_and_execute(char *datagram, int clientid, int len) {
     }
     else {
         //syserr("Niewlasciwy format datagramu"); //ew. TODO: wypisuj inaczej
-        if (DEBUG) printf("Niewlasciwy format datagramu\n");
-        if (DEBUG) printf("niewlasciwy format, datagram: %s\n",datagram);
+        printf("Niewlasciwy format datagramu\n");
+        printf("niewlasciwy format, datagram: %s\n",datagram);
     }  
     memset(datagram, 0, len);  
 
@@ -820,7 +808,7 @@ void send_data(char * data, size_t size) {
     if (size) write(1,data,size); //
     //fprintf(stderr, "size in send_data: %d",size);
 
-    //if (DEBUG) printf("send_data\n");    
+    if (DEBUG) printf("send_data\n");    
     int i;
     int anyone_inside = 0;
 
@@ -848,7 +836,7 @@ void send_data(char * data, size_t size) {
         last_nr++;
     }
     free(d);
-    //if (DEBUG) printf("Wychodzi z send_data\n");  
+    if (DEBUG) printf("Wychodzi z send_data\n");  
 }
 
 
@@ -882,21 +870,17 @@ void mix_and_send() {
        mixer(inputs, num_of_clients, out, &out_size, interval); 
     else out_size = 0;    
 
-    if (DEBUG) printf("ZA MIKSEREM\n");
-
     /*update buforow*/
-    for(i = 0; i < MAX_CLIENTS; i++) {
-        //jesli klient jest w systemie i jego kolejka aktywna TODO
+    for(i = 0; i < MAX_CLIENTS; i++) 
+        //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev) {
-            printf("WSZEDL DO PETLI\n");
             int offset = min(client_info[i].buf_count,out_size);
             memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
             memset(&buf_FIFO[i][offset], 0, offset);
             client_info[i].buf_count -= offset;
-            printf("client_info[%d].buf_count: %d\n", i,client_info[i].buf_count);
             update_min_max(i, client_info[i].buf_count);
         }
-    }
+
 
     //output = (char *) output_buf;
     //printf("output_buf: %s\n",output_buf);
@@ -905,7 +889,7 @@ void mix_and_send() {
 
     send_data(out, out_size);
 
-    //if (DEBUG) printf("Zrobiles free, ide spac\n");
+    if (DEBUG) printf("Zrobiles free, ide spac\n");
     //idz spac na interval ms TODO: zmienic zakres
     struct timespec tim, tim2;
     tim.tv_sec = 0; //0s

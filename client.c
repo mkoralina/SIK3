@@ -143,13 +143,13 @@ void wait_for(pthread_t * thread) {
             syserr("pthread_join in wait_for");
         }
         else {
-            printf("thread joined\n");
+            if (DEBUG) printf("thread joined\n");
         }
     }
 }
 
 void reboot() {
-    printf("REBOOT\n");
+    if (DEBUG) printf("REBOOT\n");
     finish = TRUE; 
     wait_for(&keepalive_thread);
     wait_for(&event_thread);
@@ -220,9 +220,11 @@ void send_CLIENT_datagram(uint32_t id) {
 }
 
 
-   
+void send_UPLOAD_datagram2(void *data, int no, int data_size) { 
+   write(1,data,data_size);
+}   
 
-void send_UPLOAD_datagram(char *data, int no, int data_size) {    
+void send_UPLOAD_datagram(void *data, int no, int data_size) {    
 
     //fprintf(stderr, "data: %*s\n",data_size,data);
     //write(1,data,data_size);
@@ -237,30 +239,27 @@ void send_UPLOAD_datagram(char *data, int no, int data_size) {
 
     char* type= "UPLOAD";
 
-    char* datagram = malloc(strlen(type) + strlen(str) + 3 + data_size); // na spacje, \n i \0
 
-    int len = strlen(type) + strlen(str) + 3 + data_size;  
+    char* datagram = malloc(strlen(type) + strlen(str) + 2 + data_size); // na spacje, \n i \0
 
-    fprintf(stderr, "data: %s\n",data );
+    int len = strlen(type) + strlen(str) + 3 + data_size; //dlugosc calego datagramu 
 
-    
-    sprintf(datagram, "%s %s\n", type, str);
-    memcpy(datagram + strlen(type) + strlen(str) + 2, data, data_size);
+    //fprintf(stderr, "data: %s\n",data );
+
+    char * header = malloc(strlen(type) + strlen(str) + 3);
+    sprintf(header, "%s %s\n", type, str);
+    memcpy(datagram, header, strlen(header));
+    memcpy(datagram + strlen(header), data, data_size);
 
     send_datagram(datagram, len); //TODO 
     
-    //TODO: 
-    /* gubia sie tutaj dane, to nie jest sobie rowne, a powinno
-    fprintf(stderr, "strlen(type) + strlen(str) + 3 + data_size = %d",strlen(type) + strlen(str) + 3 + data_size); // 
-    fprintf(stderr, "strlen(datagram) = %d",strlen(datagram)); //
-    */
-
     memset(last_datagram, 0, len);
     memcpy(last_datagram, data, len);
 
 //    memset(last_datagram, 0, strlen(last_datagram));
 //    memcpy(last_datagram, data, strlen(data));
     //write(1, data, data_size); dziala tutaj, ale juz duzo wiecej trzaskow, dzwiek wolniej, trzaski duzo szybciej
+    free(header);
     free(datagram);    
 }
 
@@ -318,7 +317,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
 
     // TODO: doczytaj jeszcze jak to jest z tymi numerami
     if (ack > last_sent && win > 0) {
-        printf("read\n");
+        if (DEBUG) printf("read\n");
         int to_read = min(win, BUF_SIZE);
         int r = read(descriptor, buf, to_read);
         if(r < 0) {
@@ -342,7 +341,9 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
         }
         if (r > 0) {
             //sprawdzam, czy dobrze dzwiek wczytuje i wypluwam go od razu na stdin
+            //fprintf(stderr, "DATA: %*s\n",r,buf);
             //write(1,buf,r);
+            
             //fprintf(stderr, "r = %d",r); // 150
             //fprintf(stderr, "strlen(buf) = %d",strlen); // 4199616
             //DZIALA!!
@@ -351,6 +352,7 @@ void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
             last_sent++; 
            // printf("send_UPLOAD_datagram(%s, dl: %d,nr: %d)\n", buf, strlen(buf),last_sent);
             //printf("send_UPLOAD_datagram( dl: %zu,nr: %d)\n", strlen(buf),last_sent);
+            if (DEBUG) printf("send_UPLOAD_datagram(buf, last_sent, r): (buf, %d, %d) + ack = %d\n",last_sent,r,ack );
             send_UPLOAD_datagram(buf, last_sent, r); 
             //fprintf(stderr, "r = %d\n",r); 
             //fprintf(stderr, "strlen = %d\n",strlen(buf));
@@ -483,12 +485,12 @@ void * event_loop(void * arg) { //TODO: ustawic, zeby w tej petli sie jakos to k
 
 
 
-void match_and_execute(char *datagram) {
+void match_and_execute(char *datagram, int len) {
     int nr;
     char data[BUF_SIZE+1];
     memset(data, 0, BUF_SIZE);
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
-    if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
+    if (sscanf(datagram, "DATA %d %d %d%[^\n]", &nr, &ack, &win, data) >= 3) {
         DATAs_since_last_datagram++;
         // TODO: malloc, free, blad na retransmisji
         /* *** Error in `./client': free(): invalid next size (fast): 0x0000000000cbf0f0 ***
@@ -501,12 +503,24 @@ void match_and_execute(char *datagram) {
         }
         if (DEBUG) {
             printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data); 
-            //if (!strlen(data)) 
-            //    printf("Przeslano pusty bufor\n");
         }
+        //dlugosc naglowka
+        int header_size = 4 + 4;
+
+        if (!nr) header_size++;
+        else header_size += (int) ((ceil(log10(nr))+1)*sizeof(char));
+
+        if (!ack) header_size++;
+        else header_size += (int) ((ceil(log10(ack))+1)*sizeof(char));
+        
+        if (!win)  header_size++; 
+        else header_size += (int) ((ceil(log10(win))+1)*sizeof(char));
+
+        int data_len = len - header_size;
         //gdy jest to nasz pierwszy DATA datagram 
         if (nr_expected == -1) {
             nr_expected = nr + 1;
+            //write(1,data,data_len); //TODO!
             //printf("%s\n",data); // TODO! odkomentowac
         }
         else if (nr > nr_expected) {
@@ -515,11 +529,13 @@ void match_and_execute(char *datagram) {
             }
             else {
                 nr_expected = nr + 1;
+                //write(1,data,data_len);
                 //przyjmuje dane -> stdout
                // printf("%s",data); //TODO: odkom
             }
         }
         else if (nr == nr_expected) {
+           // write(1,data,data_len);
             //przyjmij dane
            // printf("%s\n",data);//TODO: odkom
         }
@@ -529,11 +545,11 @@ void match_and_execute(char *datagram) {
     else if (sscanf(datagram, "ACK %d %d", &ack, &win) == 2) {
         if (ack == last_sent + 1) 
             DATAs_since_last_datagram = 0;
-        printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
+        if (DEBUG) printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
     }
     else 
         //syserr("Niewlasciwy format datagramu");
-        printf("Niewlasciwy format datagramu\n");
+        if (DEBUG) printf("Niewlasciwy format datagramu\n");
 } 
 
 char * addr_to_str(struct sockaddr_in6 *addr) {
@@ -572,7 +588,7 @@ void read_from_UDP() {
                     //    (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
                     //printf("Otrzymano: %s\n", datagram);
                 }    
-                match_and_execute(datagram);    
+                match_and_execute(datagram, len);    
             }
         } while (len > 0); 
     }
@@ -612,7 +628,7 @@ void set_event_TCP_stdin() {
 }
 
 void main_loop() {
-    printf("MAIN LOOP\n");
+    if (DEBUG) printf("MAIN LOOP\n");
     finish = FALSE;
     main_thread = pthread_self();
 

@@ -3,7 +3,7 @@
 
 CC = gcc
 CFLAGS = -Wall -g -pthread 
-TARGETS = client server 
+TARGETS = client server server1
 
 all: $(TARGETS) 
 
@@ -11,6 +11,9 @@ client: client.o err.o err.h header.h
 	$(CC) $(CFLAGS) $^ -o $@ -levent -lm 
 
 server: server.o err.o err.h mixer.h header.h
+	$(CC) $(CFLAGS) $^ -o $@ -levent -lm
+
+server1: server1.o err.o err.h mixer.h header.h
 	$(CC) $(CFLAGS) $^ -o $@ -levent -lm
 
 clean:

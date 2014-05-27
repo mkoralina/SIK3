@@ -37,7 +37,7 @@ struct mixer_input {
 
 
 //TODO
-void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,                      
+void mixer(struct mixer_input* inputs, size_t n, void* output_buf,                      
     size_t* output_size, unsigned long tx_interval_ms) {
     // n - liczba aktywnych klientow
 
@@ -80,7 +80,7 @@ void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,
         sum = 0;
         for (i = 0; i < n; i++) { 
             num = int_input[i][j];           
-            if (num != 0) { //TODO: nie wiem, cz to dziala
+            if (num) { //TODO: nie wiem, cz to dziala
                 if (num >= 0) 
                     sum = min(sum + num, MAX_SHORT_INT);                
                 else 
@@ -91,7 +91,7 @@ void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,
     }
 
     //DEBUG
-   // write(1,inputs[0].data,*output_size);
+   // write(1,(char *)int_output_buf,*output_size);
     
 
 
@@ -102,14 +102,3 @@ void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,
 
 
 }
-
-
-void mixer(struct mixer_input* inputs, size_t n, void* output_buf,                      
-    size_t* output_size, unsigned long tx_interval_ms) {
-    printf("MIXER\n");
-    *output_size = 176*tx_interval_ms;
-    int i;
-    for (i = 0; i < n; i++) {
-        inputs[i].consumed = min (inputs[i].len, 176*tx_interval_ms); 
-    }
-}    

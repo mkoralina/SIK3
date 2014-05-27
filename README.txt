@@ -14,3 +14,5 @@ sudo apt-get install libsox-fmt-mp3
 
 valgrind -v --leak-check=full --track-origins=yes ./server
 
+./server | aplay -t raw -f cd -B 5000 -v -D sysdefault -
+
