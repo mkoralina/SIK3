@@ -13,6 +13,7 @@
 #define TX_INTERVAL 5 //czas (w ms) pomiędzy kolejnymi wywołaniami miksera, ustawiany parametrem -i serwera 
 #define QUEUE_LENGTH 5 //liczba kleintow w kolejce do gniazda
 #define MAX_CLIENTS 30 
+#define DATAGRAM_SIZE 10000 
 
 #define ACTIVE 0
 #define FILLING 1 
@@ -40,6 +41,12 @@ pthread_t event_thread = 0;
 pthread_t udp_thread = 0;
 pthread_t report_thread = 0;
 pthread_t main_thread = 0;
+pthread_t client_thread[MAX_CLIENTS] = {0}; //TODO: jak zwalniam zasoby kleinta, 
+//to jego watek na 0 i dac activated na 0 i obudzic z cond jesli czeka, atam w petli gdzies war na activated -> wpp exit
+
+pthread_cond_t for_datagram[MAX_CLIENTS];
+pthread_mutex_t mut[MAX_CLIENTS];
+
 
 struct connection_description {
     int id; 
@@ -69,6 +76,11 @@ typedef struct datagram_address {
     int len;
 } datagram_address;
 
+typedef struct datagram_struct {
+    char data[DATAGRAM_SIZE];
+    int len;
+} datagram_struct;
+
 struct info client_info[MAX_CLIENTS];
 
 struct connection_description clients[MAX_CLIENTS];
@@ -78,6 +90,8 @@ char * buf_FIFO[MAX_CLIENTS];
 char * server_FIFO;
 
 int activated[MAX_CLIENTS];
+
+struct datagram_struct d[MAX_CLIENTS];
 
 //TODO: sprawdzenie poprawnosci podanych parametrow
 void get_parameters(int argc, char *argv[]) {
@@ -138,6 +152,18 @@ void wait_for(pthread_t * thread) {
 }
 
 
+void clear_d(int i) {
+    memset(d[i].data, 0, DATAGRAM_SIZE);
+    d[i].len = -1;
+}
+
+void init_d(){
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+        clear_d(i);
+    }
+}
+
 
 void free_a_client(int i) {
     if (clients[i].ev) {
@@ -169,10 +195,14 @@ static void catch_int (int sig) {
     if (DEBUG) printf("Czeka na zakonczenie watkow\n");
     wait_for(&report_thread);
     wait_for(&udp_thread);
+    int i;
+    for (i = 0; i < MAX_CLIENTS; i++){
+        pthread_cond_signal(&for_datagram[i]);
+        wait_for(&client_thread[i]);    
+    }    
     free_clients();
     cancel_event_thread();
-    
-    
+       
   	
     if (DEBUG) {
   		printf("Exit() due to Ctrl+C\n");
@@ -293,21 +323,21 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int 
     if (DEBUG) printf("send_DATA_datagram\n");
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_no_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    int str_no_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_no[str_no_size];
     sprintf(str_no, "%d", no);
 
     num = ack;
     if (!ack) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_ack_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    int str_ack_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_ack[str_ack_size];
     sprintf(str_ack, "%d", ack);
 
     num = win;
     if (!win) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_win_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    int str_win_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_win[str_win_size];
     sprintf(str_win, "%d", win);
@@ -330,14 +360,14 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int 
 void send_ACK_datagram(int ack, int win, int clientid) {
     int num = ack;
     if (!ack) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_ack_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    int str_ack_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_ack[str_ack_size];
     sprintf(str_ack, "%d", ack);
 
     num = win;
     if (!win) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_win_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    int str_win_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_win[str_win_size];
     sprintf(str_win, "%d", win);
@@ -547,7 +577,7 @@ void match_and_execute(char *datagram, int clientid, int len) {
 
         int num = nr;
         if (!nr) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-        int nr_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+        int nr_size = (int) ((floor(log10(num))+1)*sizeof(char));
         int header_size = strlen("UPLOAD") + nr_size + 2;// upload + spacja + nr + \n
         int size = len - header_size;
 
@@ -555,8 +585,7 @@ void match_and_execute(char *datagram, int clientid, int len) {
         //fprintf(stdout, "%*s\n",size,data );
         write(1,data,size); //DZIALA Z LEKKIMI TRZASKAMI, 100 - gra szybciej, 200 wolniej
         //write(2,data, 150); //wypisuje robaczki jak powinno
-        fprintf(stderr, "len - header_size: %d\n",len - header_size); //czasami trace jakies dane.. wiecej niz 12 bajtow na UPLOAD i liczbe, teraz też? juz ie, zawsze 150 praktycznie
-        fprintf(stderr, "strlen(data): %d\n",strlen(data) ); //duzo mneijsze niz 150
+        fprintf(stderr, "len - header_size: %d\n",len - header_size); //
 
         
         if (client_info[clientid].buf_count == fifo_queue_size) {
@@ -647,11 +676,8 @@ void match_and_execute(char *datagram, int clientid, int len) {
     }
     else {
         //syserr("Niewlasciwy format datagramu"); //ew. TODO: wypisuj inaczej
-        if (DEBUG) printf("Niewlasciwy format datagramu\n");
         if (DEBUG) printf("niewlasciwy format, datagram: %s\n",datagram);
-    }  
-    memset(datagram, 0, len);  
-
+    }
 } 
     
 
@@ -668,6 +694,7 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         client_info[id].ack = 0;
         client_info[id].nr = -1;
         activated[id] = 1;
+        create_processing_thread(id);
     }
     else 
         syserr("Bledny datagram poczatkowy\n");
@@ -675,47 +702,31 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
 
 void * process_datagram(void *param) {
 
-    if (DEBUG) printf("process_datagram, datagram: %s\n", ((datagram_address*)param)->datagram);
-    
-    int clientid = get_clientid(
-        ((datagram_address*)param)->sin_addr, 
-        ((datagram_address*)param)->sin_port
-        );
+    int *i = (int*) param; 
+    client_thread[*i] = pthread_self(); 
 
-    if (clientid < 0) {
-        //klienta nie ma w tabeli, jesli datagram jest typu CLIENT, trzeba go dodac 
-        add_new_client(
-            ((datagram_address*)param)->datagram, 
-            ((datagram_address*)param)->sin_addr,
-            ((datagram_address*)param)->sin_port
-            );
+    while (!finish) {
+        if (d[*i].len == -1) {
+            pthread_cond_wait(&for_datagram[*i], &mut[*i]);
+        }    
+        if (!finish) {
+            if (DEBUG) printf("wywoluje match_and_execute(d[%d].data, %d, d[%d].len) = (%s, %d)\n", *i, *i, *i, d[*i].data, d[*i].len);
+            match_and_execute(d[*i].data, *i, d[*i].len);
+            clear_d(*i);
+        }        
     }
-    else {
-        match_and_execute(
-            ((datagram_address*)param)->datagram, 
-            clientid,
-            ((datagram_address*)param)->len
-            );
-    } 
-
-    free(((datagram_address*)param)->datagram);
-    free(param);
+    client_thread[*i] = 0;
     void* ret = NULL;
-    pthread_exit(&ret); 
+    pthread_exit(&ret);
     return 0; 
 }
 
-void create_processing_thread(datagram_address* arg) {
+void create_processing_thread(int arg) {
     pthread_t r; /*wynik*/
     pthread_attr_t attr;
-    pthread_attr_init(&attr);      
-    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);  
+    pthread_attr_init(&attr);
 
-    //printf("create_processing_thread DATAGRAM ADRESS * ARG: %p\n",arg ); 
-    //printf("create_processing_thread (void *) ARG: %p\n",(void*)arg ); 
-
-
-    pthread_create(&r,&attr,process_datagram,(void*)arg);
+    pthread_create(&r,&attr,process_datagram,(void*)&arg);
 }
 
 void * event_loop(void * arg) {
@@ -772,25 +783,29 @@ void * read_from_udp(void * arg) {
                             (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
                     printf("DATAGRAM: %s\n", datagram);
                 }    
-                 
-                //DEBUG:
-               // write(1, datagram, len);
 
+                int clientid = get_clientid(client_udp.sin6_addr, ntohs(client_udp.sin6_port));
 
-                //musze zaalokowac strukture dla kazdego watku na nowo    
-                struct datagram_address *da = malloc(sizeof(datagram_address));
-                memset(da, 0, sizeof(datagram_address)); // TODO: to jest dziwne..
+                if (clientid < 0) { 
+                    add_new_client(datagram, client_udp.sin6_addr, ntohs(client_udp.sin6_port));
+                } 
+                else {
+                    if (strcmp(datagram, "KEEPALIVE\n") == 0) {
+                        if (DEBUG) printf("Zmatchowano do keepalive\n");
+                        //TODO: uaktulanij czas dla tego uzytkownika ??
+                    }
+                    else if (d[clientid].len == -1) { //zapisanie UPLOAD oraz RETRANSMIT TODO: nie bedzie kolizji?                       
+                        d[clientid].len = len;
+                        memset(d[clientid].data, 0, DATAGRAM_SIZE);
+                        memcpy(d[clientid].data, datagram, len);
+                        pthread_cond_signal(&for_datagram[clientid]);
+                    }
+                    else {
+                        syserr("Zapelnione miejsce na datagram");
+                    }  
 
-                da->datagram = malloc(len+1); // na \0 (wpp invalid read of size 1)
-                memset(da->datagram, 0, len+1);
-                memcpy(da->datagram, datagram, len);
-
-                da->sin_addr = client_udp.sin6_addr;
-                da->sin_port = ntohs(client_udp.sin6_port);
-                da->len = len; 
-
-                create_processing_thread(da); 
-
+                    
+                }    
             }
         } while (len > 0 && !finish); //dlugosc 0 jest ciezko uzyskac
         if (DEBUG) (void) printf("finished exchange\n");
@@ -817,7 +832,7 @@ void print_inputs(struct mixer_input* inputs, size_t * size) {
 void send_data(char * data, size_t size) {
 
     //DEBUG: sprawdzam, czy dzwiek jest dobry na tym etapie
-    if (size) write(1,data,size); //
+    //if (size) write(1,data,size); //
     //fprintf(stderr, "size in send_data: %d",size);
 
     //if (DEBUG) printf("send_data\n");    
@@ -843,7 +858,7 @@ void send_data(char * data, size_t size) {
         //wyszukuje koniec kolejki:
         int beg = (last_nr % BUF_LEN) * (176 * interval);
         memcpy(&server_FIFO[beg], data, 176 * interval); // powinno byc rowne sizeof(data) i w sumie strlen(data) tez
-        if (DEBUG) printf("server_FIFO: %s\n",&server_FIFO[beg] ); //dobrze, zapisuje sie gdzie trzeba, 
+        //if (DEBUG) printf("server_FIFO: %s\n",&server_FIFO[beg] ); //dobrze, zapisuje sie gdzie trzeba, 
         //zwykle server_FIFO nie pokazuje calosci, bo zatrzymuje sie na pierwszym \0
         last_nr++;
     }
@@ -981,6 +996,7 @@ int main (int argc, char *argv[]) {
 	init_client_info();
     init_buf_FIFOs();
   	init_clients(); //gniazda dla TCP
+    init_d();
     set_event_TCP();
 
     create_thread(&event_loop);

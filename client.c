@@ -61,7 +61,7 @@
 #define TRUE 1
 #define FALSE 0
 
-#define DEBUG 1 
+#define DEBUG 0 
 
 int port_num = PORT;
 char server_name[NAME_SIZE];
@@ -87,6 +87,7 @@ time_t last_to_one_reboot;
 pthread_t keepalive_thread = 0;
 pthread_t event_thread = 0;
 pthread_t main_thread = 0;
+pthread_t stdin_thread = 0;
 
 
 struct event_base *base;
@@ -220,19 +221,15 @@ void send_CLIENT_datagram(uint32_t id) {
 }
 
 
-void send_UPLOAD_datagram2(void *data, int no, int data_size) { 
-   write(1,data,data_size);
-}   
-
 void send_UPLOAD_datagram(void *data, int no, int data_size) {    
-
-    //fprintf(stderr, "data: %*s\n",data_size,data);
+    //printf("WcHOZE\n");
+    fprintf(stderr, "data: %*s\n",data_size,data);
     //write(1,data,data_size);
 
 
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    int str_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str[str_size];
     sprintf(str, "%d", no);
@@ -242,7 +239,7 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
 
     char* datagram = malloc(strlen(type) + strlen(str) + 2 + data_size); // na spacje, \n i \0
 
-    int len = strlen(type) + strlen(str) + 3 + data_size; //dlugosc calego datagramu 
+    int len = strlen(type) + strlen(str) + 2 + data_size; //dlugosc calego datagramu 
 
     //fprintf(stderr, "data: %s\n",data );
 
@@ -266,7 +263,7 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
 void send_RETRANSMIT_datagram(int no) {
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
-    int str_size = (int) ((ceil(log10(num))+1)*sizeof(char));
+    int str_size = (int) ((floor(log10(num))+1)*sizeof(char));
 
     char str[str_size];
     sprintf(str, "%d", no);
@@ -306,64 +303,71 @@ static void catch_int (int sig) {
      the signal is sent to process, which is received by and handled by root thread*/
     wait_for(&keepalive_thread);
     wait_for(&event_thread);
+    wait_for(&stdin_thread);
     exit(EXIT_SUCCESS);
 }
 
 
-void stdin_cb(evutil_socket_t descriptor, short ev, void *arg) {
+void read_from_stdin() {
     //printf("Czytanie z stdin\n");
+    stdin_thread = pthread_self();
     char buf[BUF_SIZE+1];
     memset(buf, 0, sizeof(buf));
+    
+    while (!finish) { //TODO: to jest troche slabe tak swoją drogą, baaardzo aktywne czekanie
+        fprintf(stderr,"sprawdza czy moze wejsc do czytanie w stdin\n");
+        if (ack > last_sent && win > 0) { 
+            fprintf(stderr,"(ack, last, win) = (%d, %d, %d)\n",ack, last_sent,win);           
+            if (DEBUG) printf("read\n");
+            int to_read = min(win, BUF_SIZE);
 
-    // TODO: doczytaj jeszcze jak to jest z tymi numerami
-    if (ack > last_sent && win > 0) {
-        if (DEBUG) printf("read\n");
-        int to_read = min(win, BUF_SIZE);
-        int r = read(descriptor, buf, to_read);
-        if(r < 0) {
-            perror("w evencie: read (from stdin)");
-            finish = TRUE;
-            wait_for(&keepalive_thread);
-            event_thread = 0;
-            void* ret = NULL;
-            pthread_exit(&ret);
-        }    
-        if(r == 0) {
-            perror("stdin closed. Exiting event loop.");
-            if(event_base_loopbreak(base) == -1) { 
-                perror("event_base_loopbreak");
+            
+
+            int r = read(0, buf, to_read);
+            fprintf(stderr, "Przeczytalem %d bajtow\n",r);
+            if(r < 0) {
+                perror("w evencie: read (from stdin)");
                 finish = TRUE;
-                wait_for(&keepalive_thread);
-                event_thread = 0;
+                stdin_thread = 0;
                 void* ret = NULL;
                 pthread_exit(&ret);
             }    
-        }
-        if (r > 0) {
-            //sprawdzam, czy dobrze dzwiek wczytuje i wypluwam go od razu na stdin
-            //fprintf(stderr, "DATA: %*s\n",r,buf);
-            //write(1,buf,r);
-            
-            //fprintf(stderr, "r = %d",r); // 150
-            //fprintf(stderr, "strlen(buf) = %d",strlen); // 4199616
-            //DZIALA!!
+            if(r == 0) {
+                perror("stdin closed. Exiting event loop.");
+                finish = TRUE;
+                stdin_thread = 0;
+                void* ret = NULL;
+                pthread_exit(&ret);
+                    
+            }
+            if (r > 0) {
+                //sprawdzam, czy dobrze dzwiek wczytuje i wypluwam go od razu na stdin
+                //fprintf(stderr, "DATA: %*s\n",r,buf);
+                //write(1,buf,r);
+                
+                //fprintf(stderr, "r = %d",r); // 150
+                //fprintf(stderr, "strlen(buf) = %d",strlen); // 4199616
+                //DZIALA!!
 
-            //fprintf(stderr, "buf: %s\n",buf );
-            last_sent++; 
-           // printf("send_UPLOAD_datagram(%s, dl: %d,nr: %d)\n", buf, strlen(buf),last_sent);
-            //printf("send_UPLOAD_datagram( dl: %zu,nr: %d)\n", strlen(buf),last_sent);
-            if (DEBUG) printf("send_UPLOAD_datagram(buf, last_sent, r): (buf, %d, %d) + ack = %d\n",last_sent,r,ack );
-            send_UPLOAD_datagram(buf, last_sent, r); 
-            //fprintf(stderr, "r = %d\n",r); 
-            //fprintf(stderr, "strlen = %d\n",strlen(buf));
-            //write(1, buf, r);
-            
-                         
-        }
-        memset(buf, 0, sizeof(buf));
- 
-    }   
-     
+                //fprintf(stderr, "buf: %s\n",buf );
+                last_sent++;
+               // printf("send_UPLOAD_datagram(%s, dl: %d,nr: %d)\n", buf, strlen(buf),last_sent);
+                //printf("send_UPLOAD_datagram( dl: %zu,nr: %d)\n", strlen(buf),last_sent);
+                //if (DEBUG) printf("send_UPLOAD_datagram(buf, last_sent, r): (buf, %d, %d) + ack = %d\n",last_sent,r,ack );
+                send_UPLOAD_datagram(buf, last_sent, r); 
+                //fprintf(stderr, "r = %d\n",r); 
+                //fprintf(stderr, "strlen = %d\n",strlen(buf));
+                //write(1, buf, r);
+                
+                             
+            }
+            memset(buf, 0, sizeof(buf));
+        } 
+    } 
+    fprintf(stderr, "FINISH = TRUE w stdin\n");
+    stdin_thread = 0;
+    void* ret = NULL;
+    pthread_exit(&ret);       
 }
 
 void create_thread(void * (*func)(void *)) {
@@ -490,7 +494,7 @@ void match_and_execute(char *datagram, int len) {
     char data[BUF_SIZE+1];
     memset(data, 0, BUF_SIZE);
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
-    if (sscanf(datagram, "DATA %d %d %d%[^\n]", &nr, &ack, &win, data) >= 3) {
+    if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
         DATAs_since_last_datagram++;
         // TODO: malloc, free, blad na retransmisji
         /* *** Error in `./client': free(): invalid next size (fast): 0x0000000000cbf0f0 ***
@@ -508,13 +512,13 @@ void match_and_execute(char *datagram, int len) {
         int header_size = 4 + 4;
 
         if (!nr) header_size++;
-        else header_size += (int) ((ceil(log10(nr))+1)*sizeof(char));
+        else header_size += (int) ((floor(log10(nr))+1)*sizeof(char));
 
         if (!ack) header_size++;
-        else header_size += (int) ((ceil(log10(ack))+1)*sizeof(char));
+        else header_size += (int) ((floor(log10(ack))+1)*sizeof(char));
         
         if (!win)  header_size++; 
-        else header_size += (int) ((ceil(log10(win))+1)*sizeof(char));
+        else header_size += (int) ((floor(log10(win))+1)*sizeof(char));
 
         int data_len = len - header_size;
         //gdy jest to nasz pierwszy DATA datagram 
@@ -607,7 +611,7 @@ void set_event_TCP_stdin() {
 
     struct addrinfo *addr;
 
-    int port_size = (int) ((ceil(log10(port_num))+1)*sizeof(char));    
+    int port_size = (int) ((floor(log10(port_num))+1)*sizeof(char));    
     char str_port[port_size];
     sprintf(str_port, "%d", port_num);
 
@@ -621,10 +625,10 @@ void set_event_TCP_stdin() {
     if(bufferevent_enable(bev, EV_READ | EV_WRITE) == -1)
         syserr("bufferevent_enable");
   
-    struct event *stdin_event =
+    /*struct event *stdin_event =
         event_new(base, 0, EV_READ|EV_PERSIST, stdin_cb, NULL); // 0 - standardwowe wejscie
     if(!stdin_event) syserr("event_new");
-    if(event_add(stdin_event,NULL) == -1) syserr("event_add");    
+    if(event_add(stdin_event,NULL) == -1) syserr("event_add"); */   
 }
 
 void main_loop() {
@@ -659,7 +663,8 @@ int main (int argc, char *argv[]) {
     last_datagram = malloc(DATAGRAM_SIZE);
     sock_udp = create_UDP_socket(); 
     set_event_TCP_stdin();    
-    create_thread(&event_loop); //przejmie czytanie z stdin oraz z TCP    
+    create_thread(&event_loop); //przejmie czytanie z TCP   
+    create_thread(&read_from_stdin); 
     read_from_UDP();
     free(last_datagram); // TODO: do tego nie powinien dojsc, wrzucic to do zwalniania zasobow    
     return 0;

@@ -37,7 +37,7 @@ struct mixer_input {
 
 
 //TODO
-void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,                      
+void mixer(struct mixer_input* inputs, size_t n, void* output_buf,                      
     size_t* output_size, unsigned long tx_interval_ms) {
     // n - liczba aktywnych klientow
 
@@ -104,7 +104,7 @@ void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,
 }
 
 
-void mixer(struct mixer_input* inputs, size_t n, void* output_buf,                      
+void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,                      
     size_t* output_size, unsigned long tx_interval_ms) {
     printf("MIXER\n");
     *output_size = 176*tx_interval_ms;
