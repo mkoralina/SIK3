@@ -285,6 +285,8 @@ void send_datagram(char *datagram, int clientid, int len) {
     snd_len = sendto(sock_udp, datagram, len, flags,
             (struct sockaddr *) &client_address, sizeof(client_address));    
     
+    fprintf(stderr, "send to len = %d =? %d = snd_len \n",len, snd_len);
+
     if (snd_len != len) {
             syserr("partial / failed sendto");
     }   
@@ -320,6 +322,9 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
 
 
 void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int data_len) {
+    //write(1,data,data_len); //gra jak wszedzie, kiepsko, ale gra
+
+
     if (DEBUG) printf("send_DATA_datagram\n");
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
@@ -350,8 +355,12 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int 
     memcpy(datagram, header, strlen(header));
     memcpy(datagram + strlen(header), data, data_len);
     
+    //fprintf(stderr, "header: %s o dl = %d\n",header, strlen(header));
+    //fprintf(stderr, "data_len = %d\n",data_len);
     send_datagram(datagram, clientid, data_len + strlen(header));
     
+    //write(1,data,data_len); //tutaj tez, tak samo kiepkso jak wszedzie, ale gra
+
     free(header);
     free(datagram);
 
@@ -803,7 +812,7 @@ void * read_from_udp(void * arg) {
                         //TODO: uaktulanij czas dla tego uzytkownika ??
                     }
                     //UPLOAD
-                    else if (sscanf(datagram, "UPLOAD %d", &nr) >= 1) {
+                    else if (sscanf(datagram, "UPLOAD %d", &nr) == 1) {
                         if (DEBUG) printf("Zmatchowano do UPLOAD, nr = %d\n",nr);
 
                         if (DEBUG) printf("WG MEMCHR i odejmowania wskaznikow\n");
@@ -813,7 +822,7 @@ void * read_from_udp(void * arg) {
                         if (DEBUG) printf("header_size = %d\n", header_len);
                         
                         //DEBUG: czy dziala przesylanie danych
-                        write(1, datagram+header_len, data_len);// tak samo jak w kliencie kiedy ma wlaczona komunikacje z serwrem
+                        //write(1, datagram+header_len, data_len);// tak samo jak w kliencie kiedy ma wlaczona komunikacje z serwrem
                         //write(1, data, data_len); 
 
                         if (client_info[clientid].buf_count == fifo_queue_size) {
@@ -939,7 +948,7 @@ void send_data(char * data, size_t size) {
     int i;
     int anyone_inside = 0;
 
-    char * d = malloc(size+1);
+    char * d = malloc(size+1); //TODO: po co to znowu kopiuje?
     memset(d, 0, size+1);
     memcpy(d, data, size);
 
@@ -948,7 +957,10 @@ void send_data(char * data, size_t size) {
         if(clients[i].ev && activated[i]) {
             int win = fifo_queue_size - client_info[i].buf_count;
             if (DEBUG) printf("Z send_data:\n");
-            send_DATA_datagram(d, last_nr, client_info[i].ack, win, i, size);   
+            //TODO : bylo:
+            //send_DATA_datagram(d, last_nr, client_info[i].ack, win, i, size); 
+            
+            send_DATA_datagram(data, last_nr, client_info[i].ack, win, i, size);   
             anyone_inside = 1;         
         }    
     } 
@@ -957,7 +969,9 @@ void send_data(char * data, size_t size) {
         //zapisuje datagram do kolejki FIFO serwera
         //wyszukuje koniec kolejki:
         int beg = (last_nr % BUF_LEN) * (176 * interval);
-        memcpy(&server_FIFO[beg], data, 176 * interval); // powinno byc rowne sizeof(data) i w sumie strlen(data) tez
+        memcpy(&server_FIFO[beg], data, 176 * interval); // TODO: tu jednak nie 176*interval tylko min z tego i tego bufora przekazywanego do miksera
+        //pewnie gdzie indziej też to trzeba bezie pozmieniac
+        //winno byc rowne sizeof(data) i w sumie strlen(data) tez
         //if (DEBUG) printf("server_FIFO: %s\n",&server_FIFO[beg] ); //dobrze, zapisuje sie gdzie trzeba, 
         //zwykle server_FIFO nie pokazuje calosci, bo zatrzymuje sie na pierwszym \0
         last_nr++;
@@ -1017,6 +1031,8 @@ void mix_and_send() {
     //printf("output_buf: %s\n",output_buf);
     //printf("output: %s\n",output);
     //printf("output_size: %zu\n", out_size);
+
+    //write(1, out, out_size); // gra, tak samo jak w mikserze, i tak jak na gorze
 
     send_data(out, out_size);
 

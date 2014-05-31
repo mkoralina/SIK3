@@ -54,6 +54,7 @@
 
 #define PORT 14666
 #define BUF_SIZE 200 
+#define RCV_SIZE 64000 
 #define NAME_SIZE 100 //TODO: ile to ma byc?
 #define RETRANSMIT_LIMIT 10 
 #define DATAGRAM_SIZE 10000 
@@ -321,7 +322,7 @@ void read_from_stdin() {
     memset(buf, 0, sizeof(buf));
     
     while (!finish) { //TODO: to jest troche slabe tak swoją drogą, baaardzo aktywne czekanie
-        fprintf(stderr,"sprawdza czy moze wejsc do czytanie w stdin\n");
+        //fprintf(stderr,"sprawdza czy moze wejsc do czytanie w stdin\n");
         if (ack > last_sent && win > 0) { 
             fprintf(stderr,"(ack, last, win) = (%d, %d, %d)\n",ack, last_sent,win);           
             if (DEBUG) printf("read\n");
@@ -329,7 +330,7 @@ void read_from_stdin() {
             
 
             int r = read(0, buf, to_read);
-            fprintf(stderr, "Przeczytalem %d bajtow\n",r);
+            //fprintf(stderr, "Przeczytalem %d bajtow\n",r);
             if(r < 0) {
                 perror("w evencie: read (from stdin)");
                 finish = TRUE;
@@ -496,10 +497,10 @@ void * event_loop(void * arg) { //TODO: ustawic, zeby w tej petli sie jakos to k
 
 void match_and_execute(char *datagram, int len) {
     int nr;
-    char data[BUF_SIZE+1];
-    memset(data, 0, BUF_SIZE);
+    //char data[BUF_SIZE+1];
+    //memset(data, 0, BUF_SIZE);
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
-    if (sscanf(datagram, "DATA %d %d %d %[^\n]", &nr, &ack, &win, data) >= 3) {
+    if (sscanf(datagram, "DATA %d %d %d", &nr, &ack, &win) == 3) {
         DATAs_since_last_datagram++;
         // TODO: malloc, free, blad na retransmisji
         /* *** Error in `./client': free(): invalid next size (fast): 0x0000000000cbf0f0 ***
@@ -510,26 +511,18 @@ void match_and_execute(char *datagram, int len) {
             //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac i dopisac rozmiar do parametrow
             DATAs_since_last_datagram = 0;
         }
-        if (DEBUG) {
-            printf("Zmatchowano do DATA, nr = %d, ack = %d, win = %d, dane = %s\n", nr, ack, win, data); 
-        }
-        //dlugosc naglowka
-        int header_size = 4 + 4;
+        fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win); 
 
-        if (!nr) header_size++;
-        else header_size += (int) ((floor(log10(nr))+1)*sizeof(char));
 
-        if (!ack) header_size++;
-        else header_size += (int) ((floor(log10(ack))+1)*sizeof(char));
-        
-        if (!win)  header_size++; 
-        else header_size += (int) ((floor(log10(win))+1)*sizeof(char));
-
-        int data_len = len - header_size;
+        char * ptr = memchr(datagram, '\n', len);
+        int header_len = ptr - datagram + 1;
+        int data_len = len - header_len; 
+        if (DEBUG) printf("header_size = %d\n", header_len);
+        printf("data_len = %d\n",data_len);
         //gdy jest to nasz pierwszy DATA datagram 
         if (nr_expected == -1) {
             nr_expected = nr + 1;
-            //write(1,data,data_len); //TODO!
+            write(1,datagram+header_len,data_len); //TODO!
             //printf("%s\n",data); // TODO! odkomentowac
         }
         else if (nr > nr_expected) {
@@ -538,13 +531,13 @@ void match_and_execute(char *datagram, int len) {
             }
             else {
                 nr_expected = nr + 1;
-                //write(1,data,data_len);
+                write(1,datagram+header_len,data_len);
                 //przyjmuje dane -> stdout
                // printf("%s",data); //TODO: odkom
             }
         }
         else if (nr == nr_expected) {
-           // write(1,data,data_len);
+            write(1,datagram+header_len,data_len);
             //przyjmij dane
            // printf("%s\n",data);//TODO: odkom
         }
@@ -574,7 +567,7 @@ void read_from_UDP() {
     // matchowanie komunikatow
     // obsluga komunikatow
     ssize_t len;
-    char datagram[BUF_SIZE+1];
+    char datagram[RCV_SIZE+1];
     
     int flags = 0; 
     struct sockaddr_in6 server_udp;
@@ -583,8 +576,9 @@ void read_from_UDP() {
     while (!finish) {
         do {         
             memset(datagram, 0, sizeof(datagram)); 
-            len = recvfrom(sock_udp, datagram, sizeof(datagram), flags,
+            len = recvfrom(sock_udp, datagram, RCV_SIZE, flags,
                     (struct sockaddr *) &server_udp, &rcva_len); 
+            fprintf(stderr, "read_from_udp len = %d\n",len);
 
             if (len < 0) {
                 //klopotliwe polaczenie z serwerem
