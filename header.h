@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <unistd.h> 
 #include <pthread.h> 
+#include <netinet/tcp.h> //nagle
 
 // snprintf
 #include <stdio.h>

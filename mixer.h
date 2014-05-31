@@ -65,8 +65,7 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     *output_size  = target_size;
 
     //DEBUG
-    //write(1,inputs[0].data,*output_size); //tutaj jeszcze gra, prawie tak jak w serwerze, w ktoryms momencie pada w client stin closed
-
+    //write(1,inputs[0].data,*output_size); //tutaj tez jeszzcxze nie dziala
 
     //inicjalizacja na zera?
     //for (i = 0; i < n; i++) {

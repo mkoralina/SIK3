@@ -6,6 +6,7 @@
 #include "mixer.h"
 #include "header.h" 
 
+
 #define PORT 14666 //numer portu, z którego korzysta serwer do komunikacji (zarówno TCP, jak i UDP)
 #define FIFO_SIZE 10560 //rozmiar w bajtach kolejki FIFO, którą serwer utrzymuje dla każdego z klientów; ustawiany parametrem -F serwera
 #define FIFO_LOW_WATERMARK 0 //ustawiany parametrem -L serwera
@@ -32,9 +33,9 @@ int buf_length = BUF_LEN;
 unsigned long interval = TX_INTERVAL;
 unsigned long long last_nr = 0; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
 int sock_udp = 0;
-evutil_socket_t listener_socket;
+evutil_socket_t sock_tcp;
 struct event_base *base;
-struct event *listener_socket_event;
+struct event *sock_tcp_event;
 int finish = 0;
 
 pthread_t event_thread = 0;
@@ -181,7 +182,7 @@ void free_clients() {
 }
 
 void cancel_event_thread() {
-    event_free(listener_socket_event);
+    event_free(sock_tcp_event);
     event_base_free(base); 
     event_thread = 0;
     pthread_cancel(event_thread);
@@ -443,7 +444,7 @@ void * send_a_report(void * arg) {
 
 
 //obsluguje polaczenie nowego klienta
-void listener_socket_cb(evutil_socket_t sock, short ev, void *arg)
+void sock_tcp_cb(evutil_socket_t sock, short ev, void *arg)
 {
     struct event_base *base = (struct event_base *)arg;
 
@@ -748,7 +749,7 @@ void * event_loop(void * arg) {
     if(event_base_dispatch(base) == -1) syserr("Error running dispatch loop.");
     if (DEBUG) printf("Dispatch loop finished.\n");
 
-    event_free(listener_socket_event);
+    event_free(sock_tcp_event);
     event_base_free(base); 
     event_thread = 0;
     void* ret = NULL;
@@ -822,7 +823,7 @@ void * read_from_udp(void * arg) {
                         if (DEBUG) printf("header_size = %d\n", header_len);
                         
                         //DEBUG: czy dziala przesylanie danych
-                        //write(1, datagram+header_len, data_len);// tak samo jak w kliencie kiedy ma wlaczona komunikacje z serwrem
+                        //write(1, datagram+header_len, data_len);// pyk pyk
                         //write(1, data, data_len); 
 
                         if (client_info[clientid].buf_count == fifo_queue_size) {
@@ -1032,8 +1033,8 @@ void mix_and_send() {
     //printf("output: %s\n",output);
     //printf("output_size: %zu\n", out_size);
 
-    //write(1, out, out_size); // gra, tak samo jak w mikserze, i tak jak na gorze
-
+    //write(1, out, out_size); // nie dziala tutaj juz
+    
     send_data(out, out_size);
 
     //if (DEBUG) printf("Zrobiles free, ide spac\n");
@@ -1049,37 +1050,49 @@ void mix_and_send() {
 void set_event_TCP() {
     base = event_base_new();
     if(!base) syserr("Error creating base.");
-
     
-    listener_socket = socket(AF_INET6, SOCK_STREAM, 0);
-    if(listener_socket == -1 ||
-        evutil_make_listen_socket_reuseable(listener_socket) ||
-        evutil_make_socket_nonblocking(listener_socket)) { 
+    sock_tcp = socket(AF_INET6, SOCK_STREAM, 0);
+
+    if(sock_tcp == -1 ||
+        evutil_make_listen_socket_reuseable(sock_tcp) ||
+        evutil_make_socket_nonblocking(sock_tcp)) { 
         syserr("Error preparing socket.");
     }
 
+    /*
     //ponowne uzycie adresu lokalnego (przy kolejnym uruch serwera)
     int on = 1;
-    if (setsockopt(listener_socket, SOL_SOCKET, SO_REUSEADDR,
+    if (setsockopt(sock_tcp, SOL_SOCKET, SO_REUSEADDR,
                       (char *)&on,sizeof(on)) < 0)
-         syserr("setsockopt(SO_REUSEADDR)");
+         syserr("setsockopt(SO_REUSEADDR)"); //TODO: to sie nie pkrywa z tym na górze?
+    */
 
     struct sockaddr_in6 sin;
     memset(&sin, 0, sizeof(sin));
     sin.sin6_family = AF_INET6;
     sin.sin6_addr = in6addr_any;
     sin.sin6_port = htons(port_num);
-    if(bind(listener_socket, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
+    if(bind(sock_tcp, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
         syserr("bind");
     }
 
-    if(listen(listener_socket, 5) == -1) syserr("listen");
+    if(listen(sock_tcp, 5) == -1) syserr("listen"); // 5 = backlog tells you how many connections may wait in the queue before you accept one
 
-    listener_socket_event = 
-        event_new(base, listener_socket, EV_READ|EV_PERSIST, listener_socket_cb, (void *)base);
-    if(!listener_socket_event) syserr("Error creating event for a listener socket.");
+    //TODO: w obu plikach, dac do headera
+    int flag = 1;
+    int result = setsockopt(sock_tcp, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int));    
+    if (result < 0) {
+        fprintf(stderr, "setsockopt tcp\n");
+        //TODO: reboot ???
+    }
+    
 
-    if(event_add(listener_socket_event, NULL) == -1) syserr("Error adding listener_socket event.");
+
+    sock_tcp_event = 
+        event_new(base, sock_tcp, EV_READ|EV_PERSIST, sock_tcp_cb, (void *)base);
+    if(!sock_tcp_event) syserr("Error creating event for a listener socket.");
+
+    if(event_add(sock_tcp_event, NULL) == -1) syserr("Error adding sock_tcp event.");
 }
 
 void init_activated() {
