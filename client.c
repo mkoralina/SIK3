@@ -53,7 +53,7 @@
 
 
 #define PORT 14666
-#define BUF_SIZE 200 
+#define BUF_SIZE 200
 #define RCV_SIZE 64000 
 #define NAME_SIZE 100 //TODO: ile to ma byc?
 #define RETRANSMIT_LIMIT 10 
@@ -260,7 +260,7 @@ void set_udp_event() {
     if(event_add(udp_event,NULL) == -1) syserr("event_add");    
 }
 
-void * send_KEEPALIVE_datagram(evutil_socket_t descriptor, short ev, void *arg) {
+void send_KEEPALIVE_datagram(evutil_socket_t descriptor, short ev, void *arg) {
     //TODO: warunek stopu
     char *datagram = "KEEPALIVE\n";
     send_datagram(datagram, strlen(datagram));
@@ -330,7 +330,7 @@ void send_CLIENT_datagram(uint32_t id) {
 
 void send_UPLOAD_datagram(void *data, int no, int data_size) {    
     //printf("WcHOZE\n");
-    fprintf(stderr, "data: %*s\n",data_size,data);
+    fprintf(stderr, "data UPLOAD: %*s\n",data_size,data);
 
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
@@ -475,7 +475,7 @@ void match_and_execute(char *datagram, int len) {
         int data_len = len - header_len; 
         if (DEBUG) printf("header_size = %d\n", header_len);
         fprintf(stderr, "data_len = %d\n",data_len);
-        fprintf(stderr, "data: %s\n", datagram+header_len);
+        fprintf(stderr, "data z DATA: %s\n", datagram+header_len);
         //gdy jest to nasz pierwszy DATA datagram 
         if (nr_expected == -1) {
             nr_expected = nr + 1;

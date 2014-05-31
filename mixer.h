@@ -65,7 +65,7 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     *output_size  = target_size;
 
     //DEBUG
-    //write(1,inputs[0].data,*output_size); //tutaj tez jeszzcxze nie dziala
+    write(1,inputs[0].data,*output_size); //dziala, ale meg w zwolnionym tempie i brzydko
 
     //inicjalizacja na zera?
     //for (i = 0; i < n; i++) {
