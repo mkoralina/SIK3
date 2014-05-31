@@ -18,7 +18,7 @@
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 1 
+#define DEBUG 0 
 
 #define BUF_SIZE 64000 //TODO: 64 000
 
@@ -566,7 +566,7 @@ void update_min_max(int i, long long int size) {
 }
 
 
-
+/*
 void match_and_execute(char *datagram, int clientid, int len) {
     if (DEBUG) printf("match_and_execute: %s\n",datagram);
 
@@ -667,8 +667,7 @@ void match_and_execute(char *datagram, int clientid, int len) {
                 send_DATA_datagram(datagram, (last_nr - end + i) ,client_info[clientid].ack, win,clientid, 176 * interval);
                 
             }            
-        }
-        
+        }        
     }
     else if (strcmp(datagram, "KEEPALIVE\n") == 0) {
         if (DEBUG) printf("Zmatchowano do KEEPALIVE\n");
@@ -679,7 +678,7 @@ void match_and_execute(char *datagram, int clientid, int len) {
         if (DEBUG) printf("niewlasciwy format, datagram: %s\n",datagram);
     }
 } 
-    
+*/    
 
 void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short sin_port) {
     if (DEBUG) printf("add_new_client\n");
@@ -694,12 +693,13 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         client_info[id].ack = 0;
         client_info[id].nr = -1;
         activated[id] = 1;
-        create_processing_thread(id);
+        //create_processing_thread(id);
     }
     else 
         syserr("Bledny datagram poczatkowy\n");
 }
 
+/*
 void * process_datagram(void *param) {
 
     int *i = (int*) param; 
@@ -720,14 +720,17 @@ void * process_datagram(void *param) {
     pthread_exit(&ret);
     return 0; 
 }
+*/
 
+/*
 void create_processing_thread(int arg) {
-    pthread_t r; /*wynik*/
+    pthread_t r;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
 
     pthread_create(&r,&attr,process_datagram,(void*)&arg);
 }
+*/
 
 void * event_loop(void * arg) {
     event_thread = pthread_self();
@@ -790,19 +793,116 @@ void * read_from_udp(void * arg) {
                     add_new_client(datagram, client_udp.sin6_addr, ntohs(client_udp.sin6_port));
                 } 
                 else {
+
+                    int nr;    
+                    char data[BUF_SIZE+1] = { 0 };
+
+                    //KEEPALIVE
                     if (strcmp(datagram, "KEEPALIVE\n") == 0) {
                         if (DEBUG) printf("Zmatchowano do keepalive\n");
                         //TODO: uaktulanij czas dla tego uzytkownika ??
                     }
-                    else if (d[clientid].len == -1) { //zapisanie UPLOAD oraz RETRANSMIT TODO: nie bedzie kolizji?                       
-                        d[clientid].len = len;
-                        memset(d[clientid].data, 0, DATAGRAM_SIZE);
-                        memcpy(d[clientid].data, datagram, len);
-                        pthread_cond_signal(&for_datagram[clientid]);
+                    //UPLOAD
+                    else if (sscanf(datagram, "UPLOAD %d", &nr) >= 1) {
+                        if (DEBUG) printf("Zmatchowano do UPLOAD, nr = %d\n",nr);
+
+                        if (DEBUG) printf("WG MEMCHR i odejmowania wskaznikow\n");
+                        char * ptr = memchr(datagram, '\n', len);
+                        int header_len = ptr - datagram + 1;
+                        int data_len = len - header_len; 
+                        if (DEBUG) printf("header_size = %d\n", header_len);
+                        
+                        //DEBUG: czy dziala przesylanie danych
+                        write(1, datagram+header_len, data_len);// tak samo jak w kliencie kiedy ma wlaczona komunikacje z serwrem
+                        //write(1, data, data_len); 
+
+                        if (client_info[clientid].buf_count == fifo_queue_size) {
+                            fprintf(stderr, "client_info[clientid].buf_count %d\n",client_info[clientid].buf_count);
+                            fprintf(stderr, "size, ktory przewazyl: %d\n",data_len );
+                            syserr("przepelnienie bufora");
+                        } 
+                        client_info[clientid].buf_count += data_len;
+                        memcpy(buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, datagram+header_len, data_len);
+                        
+
+                        update_min_max(clientid, client_info[clientid].buf_count);
+
+                        if (client_info[clientid].ack == nr) {
+                            client_info[clientid].ack++;
+                            client_info[clientid].nr = nr;
+                        }    
+                        
+                        int win = fifo_queue_size - client_info[clientid].buf_count;
+                       // if (win < 0) win = 0; // TODO: blad! nie powinno sie pojawic w ogole (wielowatkowosc?)
+                        if (DEBUG) printf("send_ACK_datagram(ack, win, clientid): (%d, %d, %d)\n",client_info[clientid].ack, win, clientid );
+                        if (DEBUG) printf(" client_info[clientid].buf_count: %d\n", client_info[clientid].buf_count);
+                        send_ACK_datagram(client_info[clientid].ack, win, clientid);
+                    } 
+                    else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
+                        int win = fifo_queue_size - client_info[clientid].buf_count;
+                        if (DEBUG) printf("Zmachowano do RETRANSMIT\n");
+                        /*
+                        if (last_nr - nr >= BUF_LEN) {
+                            //przesylam cala tablice
+                            int beg = (last_nr + 1) % BUF_LEN;
+                            int i;
+                            //za last_sent w tablicy (najwczesniejsze)
+                            //TODO: konflikt oznaczen
+                            for (i = beg; i < BUF_LEN; i++) {
+                                char * datagram = malloc(176 * interval);
+                                memset(datagram, 0, 176 * interval);
+                                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                                send_DATA_datagram(datagram, (last_nr - beg + 1 + i - BUF_LEN) ,client_info[clientid].ack, win,clientid, 176 * interval);
+                                
+                            }
+                            //od poczatku
+                            int end = last_nr % BUF_LEN;
+                            for (i = 0; i <= end; i++) {
+                                char * datagram = malloc(176 * interval);
+                                memset(datagram, 0, 176 * interval);
+                                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                                send_DATA_datagram(datagram, (last_nr - end + i) ,client_info[clientid].ack, win,clientid, 176 * interval);
+                                
+                            }
+                        }
+                        //nr lezy w tablicy przed last_nr
+                        else if ((last_nr % BUF_LEN) > (nr % BUF_LEN)) {
+                            int i;
+                            for (i = nr; i < last_nr ; i++) {
+                                char * datagram = malloc(176 * interval);
+                                memset(datagram, 0, 176 * interval);
+                                memcpy(datagram, &server_FIFO[(i % BUF_LEN) * 176*interval], 176 * interval);
+                                send_DATA_datagram(datagram, i, client_info[clientid].ack, win,clientid, 176 * interval);
+                                
+                            }        
+                        }
+                        else if ((nr % BUF_LEN) > (last_nr % BUF_LEN)) {
+                            //petla od nr do konca
+                            int i;
+                            int beg = nr % BUF_LEN;
+                            for (i = beg; i < BUF_LEN; i++) {
+                                char * datagram = malloc(176 * interval);
+                                memset(datagram, 0, 176 * interval);
+                                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                                send_DATA_datagram(datagram, (nr - beg + i) ,client_info[clientid].ack, win, clientid, 176 * interval);
+                                
+                            }
+                            //petla od 0 do last
+                            int end = last_nr % BUF_LEN;
+                            for (i = 0; i <= end; i++) {
+                                char * datagram = malloc(176 * interval);
+                                memset(datagram, 0, 176 * interval);
+                                memcpy(datagram, &server_FIFO[i * 176 * interval], 176 * interval);
+                                send_DATA_datagram(datagram, (last_nr - end + i) ,client_info[clientid].ack, win,clientid, 176 * interval);
+                                
+                            }            
+                        }
+                        */        
                     }
                     else {
-                        syserr("Zapelnione miejsce na datagram");
-                    }  
+                        //syserr("Niewlasciwy format datagramu"); //ew. TODO: wypisuj inaczej
+                        if (DEBUG) printf("niewlasciwy format, datagram: %s\n",datagram);
+                    } 
 
                     
                 }    

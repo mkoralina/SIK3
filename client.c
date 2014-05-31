@@ -53,7 +53,7 @@
 
 
 #define PORT 14666
-#define BUF_SIZE 150 
+#define BUF_SIZE 200 
 #define NAME_SIZE 100 //TODO: ile to ma byc?
 #define RETRANSMIT_LIMIT 10 
 #define DATAGRAM_SIZE 10000 
@@ -224,7 +224,7 @@ void send_CLIENT_datagram(uint32_t id) {
 void send_UPLOAD_datagram(void *data, int no, int data_size) {    
     //printf("WcHOZE\n");
     fprintf(stderr, "data: %*s\n",data_size,data);
-    //write(1,data,data_size);
+    
 
 
     int num = no;
@@ -241,6 +241,8 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
 
     int len = strlen(type) + strlen(str) + 2 + data_size; //dlugosc calego datagramu 
 
+
+    
     //fprintf(stderr, "data: %s\n",data );
 
     char * header = malloc(strlen(type) + strlen(str) + 3);
@@ -248,7 +250,11 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
     memcpy(datagram, header, strlen(header));
     memcpy(datagram + strlen(header), data, data_size);
 
+
+
     send_datagram(datagram, len); //TODO 
+
+//write(1,data,data_size); //brzmi dokładnie tak jak w serwerze na razie
     
     memset(last_datagram, 0, len);
     memcpy(last_datagram, data, len);
@@ -320,7 +326,6 @@ void read_from_stdin() {
             fprintf(stderr,"(ack, last, win) = (%d, %d, %d)\n",ack, last_sent,win);           
             if (DEBUG) printf("read\n");
             int to_read = min(win, BUF_SIZE);
-
             
 
             int r = read(0, buf, to_read);
