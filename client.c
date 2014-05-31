@@ -332,14 +332,16 @@ void read_from_stdin() {
             int r = read(0, buf, to_read);
             //fprintf(stderr, "Przeczytalem %d bajtow\n",r);
             if(r < 0) {
-                perror("w evencie: read (from stdin)");
+                fprintf(stderr, "w evencie: read (from stdin)\n");
+                syserr("DEBUG: blad");
                 finish = TRUE;
                 stdin_thread = 0;
                 void* ret = NULL;
                 pthread_exit(&ret);
             }    
             if(r == 0) {
-                perror("stdin closed. Exiting event loop.");
+                fprintf(stderr,"stdin closed. Exiting event loop.\n");
+                syserr("DEBUG: blad");
                 finish = TRUE;
                 stdin_thread = 0;
                 void* ret = NULL;
@@ -512,13 +514,14 @@ void match_and_execute(char *datagram, int len) {
             DATAs_since_last_datagram = 0;
         }
         fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win); 
-
+        
 
         char * ptr = memchr(datagram, '\n', len);
         int header_len = ptr - datagram + 1;
         int data_len = len - header_len; 
         if (DEBUG) printf("header_size = %d\n", header_len);
-        printf("data_len = %d\n",data_len);
+        fprintf(stderr, "data_len = %d\n",data_len);
+        fprintf(stderr, "data: %s\n", datagram+header_len);
         //gdy jest to nasz pierwszy DATA datagram 
         if (nr_expected == -1) {
             nr_expected = nr + 1;
@@ -638,7 +641,8 @@ void main_loop() {
     last_datagram = malloc(DATAGRAM_SIZE);
     //sock_udp = create_UDP_socket(); 
     set_event_TCP_stdin();    
-    create_thread(&event_loop); //przejmie czytanie z stdin oraz z TCP    
+    create_thread(&event_loop); //przejmie czytanie  z TCP    
+    create_thread(&read_from_stdin); 
     read_from_UDP();
     free(last_datagram); // TODO: do tego nie powinien dojsc, wrzucic to do zwalniania zasobow
 }
