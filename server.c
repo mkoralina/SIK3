@@ -35,8 +35,13 @@ unsigned long long last_nr = 0; //ostatnio nadany datagram po zmiksowaniu - TO T
 int sock_udp;
 evutil_socket_t sock_tcp;
 struct event_base *base;
-struct event *sock_tcp_event;
 int finish = 0;
+
+
+struct event *report_event;
+struct event *mix_send_event;
+struct event *read_event;
+struct event *client_event;
 
 
 struct connection_description {
@@ -146,22 +151,34 @@ void free_clients() {
         
 }
 
+void free_buf_FIFOs() {
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+        free(buf_FIFO[i]);    
+    }
+}
+
+void delete_events() {
+    event_del(report_event);
+    event_del(mix_send_event);
+    event_del(read_event);
+    event_del(client_event);
+}
 
 /* Obsługa sygnału kończenia */
 static void catch_int (int sig) {
     //TODO: zwalnianie zasobów!!!
 	finish = TRUE;
     if (DEBUG) printf("Czeka na zakonczenie watkow\n");
-    //wait_for(&report_thread);
-    //wait_for(&udp_thread);
+
     int i;
-    //for (i = 0; i < MAX_CLIENTS; i++){
-    //    pthread_cond_signal(&for_datagram[i]);
-    //    wait_for(&client_thread[i]);    
-    //}    
+    
     free_clients();
-    //cancel_event_thread();
-       
+    free(server_FIFO);  
+    free_buf_FIFOs();
+    delete_events();
+    event_base_free(base); 
+    
   	
     if (DEBUG) {
   		printf("Exit() due to Ctrl+C\n");
@@ -885,21 +902,21 @@ void init_activated() {
 }
 
 void set_client_event() {
-    struct event *client_event =
+    client_event =
         event_new(base, sock_tcp, EV_READ|EV_PERSIST, new_client_tcp, NULL); 
     if(!client_event) syserr("event_new");
     if(event_add(client_event,NULL) == -1) syserr("event_add client");
 }
 
 void set_read_event() {
-    struct event *read_event =
+    read_event =
         event_new(base, sock_udp, EV_READ|EV_PERSIST, read_from_udp, NULL); 
     if(!read_event) syserr("event_new");
     if(event_add(read_event,NULL) == -1) syserr("event_add udp");
 }
 
 void set_mix_send_event() {
-    struct event *mix_send_event =
+    mix_send_event =
         event_new(base, sock_udp, EV_PERSIST, mix_and_send, NULL); 
     if(!mix_send_event) syserr("event_new");
     struct timeval wait_time = { 0, 1000*interval };
@@ -908,7 +925,7 @@ void set_mix_send_event() {
 
 void set_report_event() {
     struct timeval wait_time = { 1, 0 }; // { 1s, 0 micro_s}
-    struct event *report_event =
+    report_event =
         event_new(base, sock_tcp, EV_PERSIST, send_a_report, NULL); 
     if(!report_event) syserr("event_new");
     if(event_add(report_event,&wait_time) == -1) syserr("event_add report"); 
