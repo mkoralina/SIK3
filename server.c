@@ -727,9 +727,9 @@ void send_data(char * data, size_t size) {
     //DEBUG: sprawdzam, czy dzwiek jest dobry na tym etapie
     //if (size) write(1,data,size); //
     //fprintf(stderr, "size in send_data: %d",size);
-    printf("data w send_data: %*s\n",size,data);
+    if (size) printf("data w send_data: %*s\n",size,data);
     //write(1, data, size);
-    write(1,data,client_info[0].buf_count);
+    if (size) write(1,data,client_info[0].buf_count);
 
     //if (DEBUG) printf("send_data\n");    
     int i;
@@ -769,7 +769,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
 
-    char out[BUF_SIZE];
+    char out[BUF_SIZE] = {0};
     size_t out_size = BUF_SIZE;
 
     int i;
@@ -782,7 +782,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev) { //TODO
         //if(clients[i].ev && client_info[i].buf_state == ACTIVE){
-            fprintf(stderr, "DODAJE KLEITNA %d\n",i );
+            //fprintf(stderr, "DODAJE KLEITNA %d\n",i );
             //write(2,buf_FIFO[i],client_info[i].buf_count); //jak tu wypisuje to u gory gra wolniej + pyk pyk
             /* opcja bez kopiowania */
             inputs[num_of_clients].data = (void *) buf_FIFO[i];
@@ -801,12 +801,15 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //if (num_of_clients) printf("bufor: %s\n", buf_FIFO[0]); //pusto
     //if (num_of_clients) printf("data: %s\n",(char*)inputs[0].data); //pusto
     //if (num_of_clients) printf("data calej dlugosci: %.*s\n",inputs[0].len,inputs[0].data ); //pusto
-    if (num_of_clients) send_data(inputs[0].data,min(880, inputs[0].len));
+    //if (num_of_clients) send_data(inputs[0].data,min(880, inputs[0].len)); //dziala w valgrindzie
 
 
-    if (num_of_clients) 
+    if (num_of_clients) {
        mixer(inputs, num_of_clients, out, &out_size, interval); 
-    else out_size = 0;    
+    }
+    else {
+        out_size = 0; 
+    }       
 
     if (DEBUG) printf("ZA MIKSEREM\n");
 
@@ -833,7 +836,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
     //write(1, out, out_size); // nie dziala tutaj juz
 
-    //send_data(out, out_size);
+    send_data(out, out_size);
 
     //send_data(inputs[0].data,inputs[0].len); dziala w kliecie tak jak w mikserze, naklada sie, rrrr, pyk pyk
     //int ile = min(inputs[0].len, 880);
