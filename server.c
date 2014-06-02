@@ -245,7 +245,7 @@ void send_datagram(char *datagram, int clientid, int len) {
     snd_len = sendto(sock_udp, datagram, len, flags,
             (struct sockaddr *) &client_address, sizeof(client_address));    
     
-    fprintf(stderr, "send to len = %d =? %d = snd_len \n",len, snd_len);
+    //fprintf(stderr, "send to len = %d =? %d = snd_len \n",len, snd_len);
 
     if (snd_len != len) {
             syserr("partial / failed sendto");
@@ -558,7 +558,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     len = recvfrom(sock_udp, datagram, BUF_SIZE, flags,
             (struct sockaddr *) &client_udp, &rcva_len);
 
-    fprintf(stderr, "len = %d",len); // TODO         
+    //fprintf(stderr, "len = %d",len); // TODO         
 
     if (len < 0) {
         //klopotliwe polaczenie z serwerem
@@ -710,22 +710,19 @@ void send_data(char * data, size_t size) {
     //DEBUG: sprawdzam, czy dzwiek jest dobry na tym etapie
     //if (size) write(1,data,size); //
     //fprintf(stderr, "size in send_data: %d",size);
+    printf("data w send_data: %*s\n",size,data);
+    //write(1, data, size);
+    write(1,data,client_info[0].buf_count);
 
     //if (DEBUG) printf("send_data\n");    
     int i;
     int anyone_inside = 0;
 
-    char * d = malloc(size+1); //TODO: po co to znowu kopiuje?
-    memset(d, 0, size+1);
-    memcpy(d, data, size);
-
     //przesylam do wszytskich klientow w systemie
     for(i = 0; i < MAX_CLIENTS; i++) {
         if(clients[i].ev && activated[i]) {
             int win = fifo_queue_size - client_info[i].buf_count;
-            if (DEBUG) printf("Z send_data:\n");
-            //TODO : bylo:
-            //send_DATA_datagram(d, last_nr, client_info[i].ack, win, i, size); 
+            if (DEBUG) printf("Z send_data:\n"); 
             
             send_DATA_datagram(data, last_nr, client_info[i].ack, win, i, size);   
             anyone_inside = 1;         
@@ -743,7 +740,6 @@ void send_data(char * data, size_t size) {
         //zwykle server_FIFO nie pokazuje calosci, bo zatrzymuje sie na pierwszym \0
         last_nr++;
     }
-    free(d);
     //if (DEBUG) printf("Wychodzi z send_data\n");  
 }
 
@@ -761,6 +757,10 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
     int i;
     
+    //for(i = 0; i < MAX_CLIENTS; i++) 
+    //    inputs[i].data = malloc(sizeof(char*));
+
+
     for(i = 0; i < MAX_CLIENTS; i++) {
         //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev) { //TODO
@@ -774,7 +774,18 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
             num_of_clients++;
         }
     }
-  
+
+    //write(1,inputs[0].data,min(880, inputs[0].len)); // TODO! nie wyswietla nic!!!
+    //write(1, buf_FIFO[0], min(880, client_info[0].buf_count));
+
+
+    //if (num_of_clients) write(1, inputs[0].data, inputs[0].len); //wyswietla 
+    //if (num_of_clients) write(1, buf_FIFO[0], client_info[0].buf_count); //leci
+    //if (num_of_clients) printf("bufor: %s\n", buf_FIFO[0]); //pusto
+    //if (num_of_clients) printf("data: %s\n",(char*)inputs[0].data); //pusto
+    //if (num_of_clients) printf("data calej dlugosci: %.*s\n",inputs[0].len,inputs[0].data ); //pusto
+    if (num_of_clients) send_data(inputs[0].data,min(880, inputs[0].len));
+
 
     if (num_of_clients) 
        mixer(inputs, num_of_clients, out, &out_size, interval); 
@@ -796,6 +807,8 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         }
     }
 
+
+
     //output = (char *) output_buf;
     //printf("output_buf: %s\n",output_buf);
     //printf("output: %s\n",output);
@@ -803,10 +816,26 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
     //write(1, out, out_size); // nie dziala tutaj juz
 
-    send_data(out, out_size);
+    //send_data(out, out_size);
 
-    //send_data(inputs[0].data,inputs[0].len);
-    //write(1,inputs[0].data,inputs[0].len);
+    //send_data(inputs[0].data,inputs[0].len); dziala w kliecie tak jak w mikserze, naklada sie, rrrr, pyk pyk
+    //int ile = min(inputs[0].len, 880);
+    //send_data(inputs[0].data,ile); //nie dziala, przesyla potem puste
+    //send_data(buf_FIFO[0], ile);
+    //write(1, buf_FIFO[0], client_info[0].buf_count); //to juz dziala
+    //write(1, buf_FIFO[0], ile); //dziala w valgrindzie tylko
+
+
+    //write(1,inputs[0].data,inputs[0].len); //to działa, w sensie gra, ale kiepsko
+    //ATRPA
+    /*int ile_moge = min(880,inputs[0].len);
+    char atrapa[ile_moge];
+    memset(atrapa, 0, ile_moge);
+    memcpy(atrapa, inputs[0].data, ile_moge);
+    fprintf(stderr, "zaraz sprobuje wypisac atrape o dlugosci ile moge = %d\n",ile_moge);
+    write(1,atrapa,ile_moge+1);*/
+
+
 }
 
 
