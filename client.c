@@ -148,7 +148,7 @@ void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
         //TODO: blokowanie wejscia - usuniecie zupelnie tego eventu
         //TODO: blokowanie wejscia w ronzyhc sytuacjach
 
-        fprintf(stderr,"(ack, last, win) = (%d, %d, %d)\n",ack, last_sent,win);           
+        //fprintf(stderr,"(ack, last, win) = (%d, %d, %d)\n",ack, last_sent,win);           
         if (DEBUG) printf("read\n");
         int to_read = min(win, BUF_SIZE);
         
@@ -200,8 +200,11 @@ void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg)
         read_CLIENT_datagram();
     }
 
+    //fprintf(stderr, "RAPORT RAPORT\n");
+
     char buf[BUF_SIZE+1];
     int r = read(sock_tcp, buf, BUF_SIZE);
+    //fprintf(stderr, "PRZECZYTALEN RAPORT dlugosci %d\n",r );
     if(r == -1) syserr("fail on read_from_tcp"); //TODO: reboot
     buf[r] = 0; //znak konca na koniec
     fprintf(stderr, "%s", buf); //wypisuje raport   
@@ -232,7 +235,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     memset(datagram, 0, sizeof(datagram)); 
     len = recvfrom(sock_udp, datagram, RCV_SIZE, flags,
             (struct sockaddr *) &server_udp, &rcva_len); 
-    fprintf(stderr, "read_from_udp len = %d\n",len);
+    //fprintf(stderr, "read_from_udp len = %d\n",len);
 
     if (len < 0) {
         //klopotliwe polaczenie z serwerem
@@ -298,7 +301,7 @@ void reboot() {
 
 
 void send_datagram(char *datagram, int len) {
-    fprintf(stderr, "datagram: %s\n",datagram );
+    //fprintf(stderr, "datagram: %s\n",datagram );
 
     ssize_t snd_len;
     int flags = 0;
@@ -330,7 +333,7 @@ void send_CLIENT_datagram(uint32_t id) {
 
 void send_UPLOAD_datagram(void *data, int no, int data_size) {    
     //printf("WcHOZE\n");
-    fprintf(stderr, "data UPLOAD: %*s\n",data_size,data);
+    //fprintf(stderr, "data UPLOAD: %*s\n",data_size,data);
 
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
@@ -467,19 +470,23 @@ void match_and_execute(char *datagram, int len) {
             //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac i dopisac rozmiar do parametrow
             DATAs_since_last_datagram = 0;
         }
-        fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win); 
+        fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
+        
+
         
 
         char * ptr = memchr(datagram, '\n', len);
         int header_len = ptr - datagram + 1;
         int data_len = len - header_len; 
         if (DEBUG) printf("header_size = %d\n", header_len);
-        fprintf(stderr, "data_len = %d\n",data_len);
-        fprintf(stderr, "data z DATA: %s\n", datagram+header_len);
+        //fprintf(stderr, "data_len = %d\n",data_len);
+        //fprintf(stderr, "data z DATA: %s\n", datagram+header_len);
         //gdy jest to nasz pierwszy DATA datagram 
+        fprintf(stderr, "data: %s\n", datagram+header_len);
+
         if (nr_expected == -1) {
             nr_expected = nr + 1;
-            //write(1,datagram+header_len,data_len); //TODO!
+            write(1,datagram+header_len,data_len); //TODO!
             //printf("%s\n",data); // TODO! odkomentowac
         }
         else if (nr > nr_expected) {
@@ -488,13 +495,13 @@ void match_and_execute(char *datagram, int len) {
             }
             else {
                 nr_expected = nr + 1;
-                //write(1,datagram+header_len,data_len);
+                write(1,datagram+header_len,data_len);
                 //przyjmuje dane -> stdout
                // printf("%s",data); //TODO: odkom
             }
         }
         else if (nr == nr_expected) {
-            //write(1,datagram+header_len,data_len);
+            write(1,datagram+header_len,data_len);
             //przyjmij dane
            // printf("%s\n",data);//TODO: odkom
         }

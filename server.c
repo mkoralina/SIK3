@@ -282,7 +282,7 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
 
 
 void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int data_len) {
-    //write(1,data,data_len); //gra jak wszedzie, kiepsko, ale gra
+    //write(1,data,data_len); //nie gra jak wszedzie
 
 
     if (DEBUG) printf("send_DATA_datagram\n");
@@ -319,8 +319,7 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int 
     //fprintf(stderr, "data_len = %d\n",data_len);
     send_datagram(datagram, clientid, data_len + strlen(header));
     
-    //write(1,data,data_len); //tutaj tez, tak samo kiepkso jak wszedzie, ale gra
-
+    //write(1,data,data_len); //tu juz nie dziala
     free(header);
     free(datagram);
 
@@ -383,6 +382,7 @@ void send_a_report(evutil_socket_t descriptor, short ev, void *arg) {
             client_info[i].min_FIFO = fifo_queue_size;
             client_info[i].max_FIFO = 0;
             int w;
+            fprintf(stderr, "WYSYLAM RAPORT: %s\n",report);
             if ((w = write(clients[i].sock, report, strlen(report))) == 0) {
                 syserr("write: send a report\n");
             }        
@@ -611,6 +611,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
                 memcpy(buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, datagram+header_len, data_len);
                 
 
+
                 update_min_max(clientid, client_info[clientid].buf_count);
 
                 if (client_info[clientid].ack == nr) {
@@ -623,6 +624,8 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
                 if (DEBUG) printf("send_ACK_datagram(ack, win, clientid): (%d, %d, %d)\n",client_info[clientid].ack, win, clientid );
                 if (DEBUG) printf(" client_info[clientid].buf_count: %d\n", client_info[clientid].buf_count);
                 send_ACK_datagram(client_info[clientid].ack, win, clientid);
+
+                //write(1, buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, data_len);// pyk pyk
             } 
             else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
                 int win = fifo_queue_size - client_info[clientid].buf_count;
@@ -749,7 +752,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //if (DEBUG) printf("mix_and_send\n");
     //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
 
-    struct mixer_input inputs[MAX_CLIENTS] = {{0}};
+    struct mixer_input inputs[MAX_CLIENTS];
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
 
@@ -762,10 +765,12 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev) { //TODO
         //if(clients[i].ev && client_info[i].buf_state == ACTIVE){
-            
+            fprintf(stderr, "DODAJE KLEITNA %d\n",i );
+            //write(2,buf_FIFO[i],client_info[i].buf_count); //jak tu wypisuje to u gory gra wolniej + pyk pyk
             /* opcja bez kopiowania */
             inputs[num_of_clients].data = (void *) buf_FIFO[i];
             inputs[num_of_clients].len = client_info[i].buf_count;
+            //write(1,inputs[num_of_clients].data,inputs[num_of_clients].len); //tutaj gra, to baaaardzo wolno i rrrr
             num_of_clients++;
         }
     }
@@ -800,6 +805,8 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
     send_data(out, out_size);
 
+    //send_data(inputs[0].data,inputs[0].len);
+    //write(1,inputs[0].data,inputs[0].len);
 }
 
 
