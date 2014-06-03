@@ -650,7 +650,9 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
                 if (client_info[clientid].buf_count > BUF_SIZE) syserr("przepelnienie bufora klienta");
                 fprintf(stderr, "client_info[clientid].buf_count = %d\n",client_info[clientid].buf_count);
 
-                write(1, buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, data_len); //dziala
+                //write(1, buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, data_len); //dziala tutaj bardzo ladnie nawwet jak przesylam
+                //write(1, buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, data_len/2); //dziala
+                //write(1, buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, 100); //dziala, odtwarza kawalki tylko
 
 
                 update_min_max(clientid, client_info[clientid].buf_count);
@@ -887,15 +889,31 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //printf("output_size: %zu\n", out_size);
 
     //write(1, out, out_size); // 
+//    write(1, buf_FIFO[0], client_info[0].buf_count); //dzial tylko sie nachodza dzwieki, nie?
+//    write(1, buf_FIFO[0] + 0, 880); //to nie działa
 
-    memset(out, 1, BUF_SIZE);
+
+    memset(out, 0, out_size);
+    fprintf(stderr, "out_size = %d\n",out_size);
+    if (num_of_clients) memcpy(out, buf_FIFO[0], out_size);
+    else memset(out, 1, BUF_SIZE);
+    int w;
+    //memset(out, 1, BUF_SIZE);
+    if (w = write(1, out, out_size) < 0) {
+        syserr("blad we write(1,out,out_size");
+    }
+    else {
+        fprintf(stderr, "w = %d\n",w);
+    }
+            
+
     send_data(out, out_size);
 
     //send_data(inputs[0].data,inputs[0].len); dziala w kliecie tak jak w mikserze, naklada sie, rrrr, pyk pyk
     //int ile = min(inputs[0].len, 880);
     //send_data(inputs[0].data,ile); //nie dziala, przesyla potem puste
     //send_data(buf_FIFO[0], ile);
-    //write(1, buf_FIFO[0], client_info[0].buf_count); //to juz dziala
+    
     //write(1, buf_FIFO[0], ile); //dziala w valgrindzie tylko
 
 
