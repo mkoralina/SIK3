@@ -37,9 +37,7 @@ evutil_socket_t sock_tcp;
 struct event_base *base;
 int finish = 0;
 
-char out[BUF_SIZE] = {0};    
-struct mixer_input inputs[MAX_CLIENTS];
-size_t out_size = BUF_SIZE;
+
 
 
 
@@ -301,7 +299,14 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
   	//printf("size of datagram = %d\n",sizeof(datagram));
   	if (w != strlen(datagram)) syserr("nie przeszlo\n"); 
   	if (DEBUG) printf("przeszlo\n");
+    
+
+
+
     free(datagram);
+
+
+
 }
 
 
@@ -563,6 +568,11 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         client_info[id].ack = 0;
         client_info[id].nr = -1;
         activated[id] = 1;
+
+        //ATRAPA TODO usuń (do ropzoczecia przesyalnaia)
+        //send_data(datagram, strlen(datagram));
+
+
     }
     else 
         syserr("Bledny datagram poczatkowy\n");
@@ -626,14 +636,21 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
                 //write(1, datagram+header_len, data_len);// pyk pyk
                 //write(1, data, data_len); 
 
+                //send_data(datagram+header_len, data_len);
+
                 if (client_info[clientid].buf_count == fifo_queue_size) {
                     fprintf(stderr, "client_info[clientid].buf_count %d\n",client_info[clientid].buf_count);
                     fprintf(stderr, "size, ktory przewazyl: %d\n",data_len );
                     syserr("przepelnienie bufora");
                 } 
-                client_info[clientid].buf_count += data_len;
-                memcpy(buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, datagram+header_len, data_len);
                 
+                memcpy(buf_FIFO[clientid] + client_info[clientid].buf_count, datagram+header_len, data_len);
+                client_info[clientid].buf_count += data_len;
+
+                if (client_info[clientid].buf_count > BUF_SIZE) syserr("przepelnienie bufora klienta");
+                fprintf(stderr, "client_info[clientid].buf_count = %d\n",client_info[clientid].buf_count);
+
+                write(1, buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, data_len); //dziala
 
 
                 update_min_max(clientid, client_info[clientid].buf_count);
@@ -737,9 +754,9 @@ void send_data(char * data, size_t size) {
     //DEBUG: sprawdzam, czy dzwiek jest dobry na tym etapie
     //if (size) write(1,data,size); //
     //fprintf(stderr, "size in send_data: %d",size);
-    if (size) printf("data w send_data: %*s\n",size,data);
+    //if (size) printf("data w send_data: %*s\n",size,data);
     //write(1, data, size);
-    if (size) write(1,data,client_info[0].buf_count);
+    //if (size) write(1,data,client_info[0].buf_count);
 
     //if (DEBUG) printf("send_data\n");    
     int i;
@@ -776,14 +793,14 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //if (DEBUG) printf("mix_and_send\n");
     //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
 
+    printf("arg %p\n",(void*)&ev);
     
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
 
-    //gdy zmienne globalne
-    out_size = BUF_SIZE;
-    memset(out, 0, BUF_SIZE);
-    // inicjacja inputs jeszcze potrzebna
+    char out[BUF_SIZE] = {0};    
+    struct mixer_input inputs[MAX_CLIENTS];
+    size_t out_size = BUF_SIZE;
  
     int i;
     
@@ -815,7 +832,29 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //if (num_of_clients) printf("data: %s\n",(char*)inputs[0].data); //pusto
     //if (num_of_clients) printf("data calej dlugosci: %.*s\n",inputs[0].len,inputs[0].data ); //pusto
     //if (num_of_clients) send_data(inputs[0].data,min(880, inputs[0].len)); //dziala w valgrindzie
+    
+    
 
+    if (num_of_clients) {
+
+        size_t ile = min(880, client_info[0].buf_count);
+        
+        char * pakiet = malloc(880*sizeof(char)+1);
+        memset(pakiet, 0, 880);
+        memcpy(pakiet, buf_FIFO[0], ile);
+        fprintf(stderr, "ile = %p\n", &ile);
+        fprintf(stderr, "pakiet %p\n",pakiet);
+        fprintf(stderr, "buf_FIFO[0] %p\n", (void *)buf_FIFO[0]);
+        fprintf(stderr, "pakiet %s\n",pakiet);
+        //write(1,pakiet,880); 
+        //write(1, buf_FIFO[0], client_info[0].buf_count); //wypisuje, z 880 juz nie
+        //printf("%.*s\n",880,buf_FIFO[0] ); //nie dziala w ogole
+        //if (num_of_clients) send_data(pakiet,880);  
+        free(pakiet);
+
+    }  
+
+    //if (num_of_clients) send_data(inputs[0].data,inputs[0].len);
 
     if (num_of_clients) {
        mixer(inputs, num_of_clients, out, &out_size, interval); 
@@ -835,7 +874,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
             memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
             memset(&buf_FIFO[i][offset], 0, offset);
             client_info[i].buf_count -= offset;
-            if (DEBUG) printf("client_info[%d].buf_count: %d\n", i,client_info[i].buf_count);
+            if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
             update_min_max(i, client_info[i].buf_count);
         }
     }
@@ -849,6 +888,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
     //write(1, out, out_size); // 
 
+    memset(out, 1, BUF_SIZE);
     send_data(out, out_size);
 
     //send_data(inputs[0].data,inputs[0].len); dziala w kliecie tak jak w mikserze, naklada sie, rrrr, pyk pyk
@@ -875,7 +915,8 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
 void set_base() {
     base = event_base_new();
-    event_base_priority_init(base, 2);
+    //fprintf(stderr, "base %p\n", (void *)base);
+    //event_base_priority_init(base, 2);
     if(!base) syserr("Error creating base."); //TODO: probuje dalej
 }
 

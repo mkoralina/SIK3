@@ -62,7 +62,7 @@
 #define TRUE 1
 #define FALSE 0
 
-#define DEBUG 0
+#define DEBUG 1
 
 int port_num = PORT;
 char server_name[NAME_SIZE];
@@ -93,6 +93,7 @@ pthread_t stdin_thread = 0;
 
 
 struct event_base *base;
+struct event *stdin_event;
 
 struct addrinfo addr_hints = {
     .ai_flags = AI_V4MAPPED,  // ew.  AI_V4MAPPED | AI_ALL  
@@ -180,12 +181,15 @@ void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
         }
         memset(buf, 0, sizeof(buf));
     } 
+    else {
+        event_del(stdin_event);   
+    }
       
 }
 
 void set_stdin_event() {
     int stdin = 0;
-    struct event *stdin_event =
+    stdin_event =
         event_new(base, stdin, EV_READ|EV_PERSIST, read_from_stdin, NULL); 
     if(!stdin_event) syserr("event_new");
     if(event_add(stdin_event,NULL) == -1) syserr("event_add"); 
@@ -461,6 +465,9 @@ void match_and_execute(char *datagram, int len) {
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
     if (sscanf(datagram, "DATA %d %d %d", &nr, &ack, &win) == 3) {
         DATAs_since_last_datagram++;
+        if (ack == last_sent+1 && win > 0) {
+            if(event_add(stdin_event,NULL) == -1) syserr("event_add");
+        }
         // TODO: malloc, free, blad na retransmisji
         /* *** Error in `./client': free(): invalid next size (fast): 0x0000000000cbf0f0 ***
            *** Error in `./client': malloc(): memory corruption: 0x0000000000cbf110 ***
@@ -511,6 +518,10 @@ void match_and_execute(char *datagram, int len) {
     else if (sscanf(datagram, "ACK %d %d", &ack, &win) == 2) {
         if (ack == last_sent + 1) 
             DATAs_since_last_datagram = 0;
+        if (ack == last_sent+1 && win > 0) {
+            if(event_add(stdin_event,NULL) == -1) syserr("event_add");
+        }
+
         if (DEBUG) printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
     }
     else 
@@ -620,15 +631,6 @@ int main (int argc, char *argv[]) {
     if (DEBUG) printf("Dispatch loop finished.\n");
 
     event_base_free(base);
-
-    
-    /*
-    set_event_TCP_stdin();    
-    create_thread(&event_loop); //przejmie czytanie z TCP   
-    create_thread(&read_from_stdin); 
-    read_from_UDP();
-    */
-
 
     free(last_datagram); // TODO: do tego nie powinien dojsc, wrzucic to do zwalniania zasobow    
     return 0;
