@@ -229,7 +229,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     // matchowanie komunikatow
     // obsluga komunikatow
 
-    
+    fprintf(stderr, "PYK PYK\n");
 
     ssize_t len;
     char datagram[RCV_SIZE+1];

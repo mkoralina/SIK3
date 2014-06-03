@@ -801,7 +801,6 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //if (DEBUG) printf("mix_and_send\n");
     //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
 
-    printf("arg %p\n",(void*)&ev);
     
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
@@ -830,81 +829,25 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         }
     }
 
-    //write(1,inputs[0].data,min(880, inputs[0].len)); // TODO! nie wyswietla nic!!!
-    //write(1, buf_FIFO[0], min(880, client_info[0].buf_count));
-
-
-    //if (num_of_clients) write(1, inputs[0].data, inputs[0].len); //wyswietla 
-    //if (num_of_clients) write(1, buf_FIFO[0], client_info[0].buf_count); //leci
-    //if (num_of_clients) printf("bufor: %s\n", buf_FIFO[0]); //pusto
-    //if (num_of_clients) printf("data: %s\n",(char*)inputs[0].data); //pusto
-    //if (num_of_clients) printf("data calej dlugosci: %.*s\n",inputs[0].len,inputs[0].data ); //pusto
-    //if (num_of_clients) send_data(inputs[0].data,min(880, inputs[0].len)); //dziala w valgrindzie
-    
-    
 
     if (num_of_clients) {
-
-        size_t ile = min(880, client_info[0].buf_count);
-        
-        char * pakiet = malloc(880*sizeof(char)+1);
-        memset(pakiet, 0, 880);
-        memcpy(pakiet, buf_FIFO[0], ile);
-        fprintf(stderr, "ile = %p\n", &ile);
-        fprintf(stderr, "pakiet %p\n",pakiet);
-        fprintf(stderr, "buf_FIFO[0] %p\n", (void *)buf_FIFO[0]);
-        fprintf(stderr, "pakiet %s\n",pakiet);
-        //write(1,pakiet,880); 
-        //write(1, buf_FIFO[0], client_info[0].buf_count); //wypisuje, z 880 juz nie
-        //printf("%.*s\n",880,buf_FIFO[0] ); //nie dziala w ogole
-        //if (num_of_clients) send_data(pakiet,880);  
-        free(pakiet);
-
-    }  
-
-    //if (num_of_clients) send_data(inputs[0].data,inputs[0].len);
-
-    if (num_of_clients) {
-       mixer(inputs, num_of_clients, out, &out_size, interval); 
+        mixer(inputs, num_of_clients, out, &out_size, interval); 
+        int ile = min(inputs[0].len, 880);
+        send_data(inputs[0].data,ile);
+        //send_data(out, out_size);
     }
     else {
-        out_size = 0; 
+        out_size = 880;
+        char * atrapa = malloc(880);
+        memset(atrapa, 0, 880);
+        send_data(atrapa, 880);
     }       
 
     if (DEBUG) printf("ZA MIKSEREM\n");
 
     //output = (char *) output_buf;
-    //printf("output_buf: %s\n",output_buf);
-    //printf("output: %s\n",output);
-    //printf("output_size: %zu\n", out_size);
 
-    //write(1, out, out_size); // 
-//    write(1, buf_FIFO[0], client_info[0].buf_count); //dzial tylko sie nachodza dzwieki, nie? i przeusnicei, bo to juz po czyszczeniu
-//    write(1, buf_FIFO[0] + 0, 880); //to nie działa
-
-
-/*    memset(out, 0, out_size);
-    fprintf(stderr, "out_size = %d\n",out_size);
-    if (num_of_clients) memcpy(out, buf_FIFO[0], out_size);
-    else memset(out, 1, BUF_SIZE);
-    int w;
-    //memset(out, 1, BUF_SIZE);
-    if (w = write(1, out, out_size) < 0) {
-        syserr("blad we write(1,out,out_size");
-    }
-    else {
-        fprintf(stderr, "w = %d\n",w);
-    }
-  */          
-
-    int ile = min(inputs[0].len, 880);
-    send_data(inputs[0].data,ile);
-    //send_data(out, out_size);
-
-
-
-
-
+    
 
     /*update buforow*/
     for(i = 0; i < MAX_CLIENTS; i++) {
@@ -919,28 +862,6 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
             update_min_max(i, client_info[i].buf_count);
         }
     }
-
-
-
-
-
-    //send_data(inputs[0].data,inputs[0].len); dziala w kliecie tak jak w mikserze, naklada sie, rrrr, pyk pyk
-    //int ile = min(inputs[0].len, 880);
-    //send_data(inputs[0].data,ile); //nie dziala, przesyla potem puste
-    //send_data(buf_FIFO[0], ile);
-    
-    //write(1, buf_FIFO[0], ile); //dziala w valgrindzie tylko
-
-
-    //write(1,inputs[0].data,inputs[0].len); //to działa, w sensie gra, ale kiepsko
-    //ATRPA
-    /*int ile_moge = min(880,inputs[0].len);
-    char atrapa[ile_moge];
-    memset(atrapa, 0, ile_moge);
-    memcpy(atrapa, inputs[0].data, ile_moge);
-    fprintf(stderr, "zaraz sprobuje wypisac atrape o dlugosci ile moge = %d\n",ile_moge);
-    write(1,atrapa,ile_moge+1);*/
-
 
 }
 
