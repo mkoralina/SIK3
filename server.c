@@ -37,11 +37,17 @@ evutil_socket_t sock_tcp;
 struct event_base *base;
 int finish = 0;
 
+char out[BUF_SIZE] = {0};    
+struct mixer_input inputs[MAX_CLIENTS];
+size_t out_size = BUF_SIZE;
+
+
 
 struct event *report_event;
 struct event *mix_send_event;
 struct event *read_event;
 struct event *client_event;
+struct event *write_event;
 
 
 struct connection_description {
@@ -84,6 +90,7 @@ struct connection_description clients[MAX_CLIENTS];
 char * buf_FIFO[MAX_CLIENTS];
 
 char * server_FIFO;
+int server_count = 0; //ktory datagram jest ostatni w server_FIFO
 
 int activated[MAX_CLIENTS];
 
@@ -720,6 +727,9 @@ void add_to_inputs(struct mixer_input* inputs, struct mixer_input input, size_t 
     (*position)++;    
 }
 
+void write_to_udp(evutil_socket_t descriptor, short ev, void *arg) {
+
+}
 
 //wysylam dane do wszystkich klientow
 void send_data(char * data, size_t size) {
@@ -761,17 +771,20 @@ void send_data(char * data, size_t size) {
 }
 
 
+
 void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //if (DEBUG) printf("mix_and_send\n");
     //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
 
-    struct mixer_input inputs[MAX_CLIENTS];
+    
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
 
-    char out[BUF_SIZE] = {0};
-    size_t out_size = BUF_SIZE;
-
+    //gdy zmienne globalne
+    out_size = BUF_SIZE;
+    memset(out, 0, BUF_SIZE);
+    // inicjacja inputs jeszcze potrzebna
+ 
     int i;
     
     //for(i = 0; i < MAX_CLIENTS; i++) 
@@ -817,12 +830,12 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     for(i = 0; i < MAX_CLIENTS; i++) {
         //jesli klient jest w systemie i jego kolejka aktywna TODO
         if(clients[i].ev) {
-            printf("WSZEDL DO PETLI\n");
+            if (DEBUG) printf("WSZEDL DO PETLI\n");
             int offset = min(client_info[i].buf_count,out_size);
             memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
             memset(&buf_FIFO[i][offset], 0, offset);
             client_info[i].buf_count -= offset;
-            printf("client_info[%d].buf_count: %d\n", i,client_info[i].buf_count);
+            if (DEBUG) printf("client_info[%d].buf_count: %d\n", i,client_info[i].buf_count);
             update_min_max(i, client_info[i].buf_count);
         }
     }
@@ -834,7 +847,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     //printf("output: %s\n",output);
     //printf("output_size: %zu\n", out_size);
 
-    //write(1, out, out_size); // nie dziala tutaj juz
+    //write(1, out, out_size); // 
 
     send_data(out, out_size);
 
@@ -862,6 +875,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
 void set_base() {
     base = event_base_new();
+    event_base_priority_init(base, 2);
     if(!base) syserr("Error creating base."); //TODO: probuje dalej
 }
 
@@ -922,6 +936,10 @@ void set_mix_send_event() {
     mix_send_event =
         event_new(base, sock_udp, EV_PERSIST, mix_and_send, NULL); 
     if(!mix_send_event) syserr("event_new");
+
+ //   if (event_priority_set(mix_send_event, 1) < 0) //TODO: wlasciwie to dziala i na 0, i na 1, na obu słabo, ale lepiej niz bez niczego
+ //       syserr("event priority set");
+
     struct timeval wait_time = { 0, 1000*interval };
     if(event_add(mix_send_event,&wait_time) == -1) syserr("event_add mix");
 }
@@ -934,12 +952,19 @@ void set_report_event() {
     if(event_add(report_event,&wait_time) == -1) syserr("event_add report"); 
 }
 
-
+void set_write_event() {
+    write_event =
+        event_new(base, sock_udp, EV_PERSIST|EV_WRITE, write_to_udp, NULL); 
+    if(!write_event) syserr("event_new");
+    if(event_add(write_event, NULL) == -1) syserr("event_add write");
+}
 
 void set_events() {
+
     set_client_event(); //odbiera polaczenia od klientow
     set_read_event(); //czyta z udp
-    set_mix_send_event(); //miskuje i przesyla po udp
+    //set_write_event(); //pisze po udp
+    set_mix_send_event(); //miskuje i przesyla po udp TODO (jednak write przesyla)
     set_report_event(); //przesyla raporty po tcp
 
 }

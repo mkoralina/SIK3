@@ -58,7 +58,7 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
     int target_size = 176 * tx_interval_ms; 
     if (target_size > *output_size) {
-        perror("Bufor do miksera jest za maly");
+        fprintf(stderr,"Bufor do miksera jest za maly %d",*output_size);
         target_size = *output_size;
     }
 
@@ -142,12 +142,4 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 }
 
 
-void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,                      
-    size_t* output_size, unsigned long tx_interval_ms) {
-    printf("MIXER\n");
-    *output_size = 176*tx_interval_ms;
-    int i;
-    for (i = 0; i < n; i++) {
-        inputs[i].consumed = min (inputs[i].len, 176*tx_interval_ms); 
-    }
-}    
+   
