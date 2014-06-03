@@ -226,6 +226,8 @@ struct connection_description *get_client_slot(void)
 //TODO: wlasciwie to nie wiem, po co to jest... bo my nic od tego kleita nie czytamy na dobra sprawe...
 void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
 {
+    fprintf(stderr, "WCHODZI DO CLIENT SOCKET CB\n");
+
     struct connection_description *cl = (struct connection_description *)arg;
     char buf[BUF_SIZE+1] = { 0 };
 
@@ -267,7 +269,7 @@ void send_datagram(char *datagram, int clientid, int len) {
     snd_len = sendto(sock_udp, datagram, len, flags,
             (struct sockaddr *) &client_address, sizeof(client_address));    
     
-    //fprintf(stderr, "send to len = %d =? %d = snd_len \n",len, snd_len);
+    fprintf(stderr, "send to len = %d =? %d = snd_len \n",len, snd_len);
 
     if (snd_len != len) {
             syserr("partial / failed sendto");
@@ -340,6 +342,10 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int 
     char * datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 4 + data_len);    
     char * header = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 5);
     sprintf(header, "%s %s %s %s\n", type, str_no, str_ack, str_win); 
+    //fprintf(stderr, "header = %s\n",header);
+    //fprintf(stderr, "strlen(header) = %d\n",strlen(header));
+    //fprintf(stderr, "strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 5 = %d\n", strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 5);
+
 
     memcpy(datagram, header, strlen(header));
     memcpy(datagram + strlen(header), data, data_len);
@@ -867,6 +873,39 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
     if (DEBUG) printf("ZA MIKSEREM\n");
 
+    //output = (char *) output_buf;
+    //printf("output_buf: %s\n",output_buf);
+    //printf("output: %s\n",output);
+    //printf("output_size: %zu\n", out_size);
+
+    //write(1, out, out_size); // 
+//    write(1, buf_FIFO[0], client_info[0].buf_count); //dzial tylko sie nachodza dzwieki, nie? i przeusnicei, bo to juz po czyszczeniu
+//    write(1, buf_FIFO[0] + 0, 880); //to nie działa
+
+
+/*    memset(out, 0, out_size);
+    fprintf(stderr, "out_size = %d\n",out_size);
+    if (num_of_clients) memcpy(out, buf_FIFO[0], out_size);
+    else memset(out, 1, BUF_SIZE);
+    int w;
+    //memset(out, 1, BUF_SIZE);
+    if (w = write(1, out, out_size) < 0) {
+        syserr("blad we write(1,out,out_size");
+    }
+    else {
+        fprintf(stderr, "w = %d\n",w);
+    }
+  */          
+
+    int ile = min(inputs[0].len, 880);
+    send_data(inputs[0].data,ile);
+    //send_data(out, out_size);
+
+
+
+
+
+
     /*update buforow*/
     for(i = 0; i < MAX_CLIENTS; i++) {
         //jesli klient jest w systemie i jego kolejka aktywna TODO
@@ -883,31 +922,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
 
 
-    //output = (char *) output_buf;
-    //printf("output_buf: %s\n",output_buf);
-    //printf("output: %s\n",output);
-    //printf("output_size: %zu\n", out_size);
 
-    //write(1, out, out_size); // 
-//    write(1, buf_FIFO[0], client_info[0].buf_count); //dzial tylko sie nachodza dzwieki, nie?
-//    write(1, buf_FIFO[0] + 0, 880); //to nie działa
-
-
-    memset(out, 0, out_size);
-    fprintf(stderr, "out_size = %d\n",out_size);
-    if (num_of_clients) memcpy(out, buf_FIFO[0], out_size);
-    else memset(out, 1, BUF_SIZE);
-    int w;
-    //memset(out, 1, BUF_SIZE);
-    if (w = write(1, out, out_size) < 0) {
-        syserr("blad we write(1,out,out_size");
-    }
-    else {
-        fprintf(stderr, "w = %d\n",w);
-    }
-            
-
-    send_data(out, out_size);
 
     //send_data(inputs[0].data,inputs[0].len); dziala w kliecie tak jak w mikserze, naklada sie, rrrr, pyk pyk
     //int ile = min(inputs[0].len, 880);

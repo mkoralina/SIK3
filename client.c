@@ -228,6 +228,9 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     // czytanie w petli z UDP (jaka dlugosc? czy na pewno dobrze wczyta? czy moze nie zdazyc wczytac i np. beda juz dw w srodku? na pewno! co wtedy ?)
     // matchowanie komunikatow
     // obsluga komunikatow
+
+    
+
     ssize_t len;
     char datagram[RCV_SIZE+1];
     
@@ -239,7 +242,10 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     memset(datagram, 0, sizeof(datagram)); 
     len = recvfrom(sock_udp, datagram, RCV_SIZE, flags,
             (struct sockaddr *) &server_udp, &rcva_len); 
-    //fprintf(stderr, "read_from_udp len = %d\n",len);
+   // fprintf(stderr, "read_from_udp len = %d\n",len);
+    //write(1,datagram, len);
+    //fprintf(stderr, "datagram: %s\n",datagram );
+
 
     if (len < 0) {
         //klopotliwe polaczenie z serwerem
@@ -477,7 +483,7 @@ void match_and_execute(char *datagram, int len) {
             //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac i dopisac rozmiar do parametrow
             DATAs_since_last_datagram = 0;
         }
-        fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
+        //fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
         
 
         
@@ -489,7 +495,7 @@ void match_and_execute(char *datagram, int len) {
         //fprintf(stderr, "data_len = %d\n",data_len);
         //fprintf(stderr, "data z DATA: %s\n", datagram+header_len);
         //gdy jest to nasz pierwszy DATA datagram 
-        fprintf(stderr, "data: %s\n", datagram+header_len);
+        //fprintf(stderr, "data: %s\n", datagram+header_len);
 
         if (nr_expected == -1) {
             nr_expected = nr + 1;
