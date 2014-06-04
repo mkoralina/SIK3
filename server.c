@@ -819,34 +819,63 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 */
 
 
+
 void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
-    if (activated[0]) {
+    
+    struct mixer_input inputs[MAX_CLIENTS];
+    char output_buf[BUF_SIZE];
+    memset(output_buf, 0, BUF_SIZE);
+    size_t output_size = BUF_SIZE;
+    
 
-        struct mixer_input inputs[MAX_CLIENTS];
-        inputs[0].data = buf_FIFO[0];
-        inputs[0].len = client_info[0].buf_count;
+    int num_clients = 0;
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+    //jesli klient jest w systemie i jego kolejka aktywna
+        if(activated[i]) { //TODO
+        //if(clients[i].ev && client_info[i].buf_state == ACTIVE){       
+            inputs[num_clients].data = buf_FIFO[i];
+            inputs[num_clients].len = client_info[i].buf_count;
+            num_clients++;
+        }
+    }
 
-        char output_buf[BUF_SIZE];
-        memset(output_buf, 0, BUF_SIZE);
-        size_t output_size = BUF_SIZE;
+    //dotad dziala
 
-        size_t n = 1;
-        mixer(inputs, n, output_buf, &output_size, interval);
+    mixer(inputs, num_clients, output_buf, &output_size, interval);
 
-           
+    num_clients = 0;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+    //jesli klient jest w systemie i jego kolejka aktywna
+        if(activated[i]) { //TODO
+        //if(clients[i].ev && client_info[i].buf_state == ACTIVE){       
 
-        int ile = min(880, client_info[0].buf_count);
-        send_DATA_datagram(output_buf, last_nr, client_info[0].ack, fifo_queue_size - client_info[0].buf_count, 0, ile);
-        last_nr++;
+            int ile = min(output_size, client_info[i].buf_count);
+            fprintf(stderr, "ile = %d\n",ile );
+            fprintf(stderr, "output_size = %d\n",output_size);
+            //ile = output_size;
+            send_DATA_datagram(output_buf, last_nr, client_info[i].ack, fifo_queue_size - client_info[i].buf_count, 0, ile); //TODO to nie powinno byc ile, ale output_size, ale wtedy nie dziala
+            
+            //update bufora
+            memmove(buf_FIFO[i], &buf_FIFO[0][ile], client_info[i].buf_count - inputs[num_clients].consumed);            
+            client_info[i].buf_count -= inputs[num_clients].consumed;
+            //if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
+            update_min_max(0, client_info[i].buf_count);
 
-        //update bufora
-        memmove(buf_FIFO[0], &buf_FIFO[0][ile], client_info[0].buf_count - ile);            
-        client_info[0].buf_count -= ile;
-        //if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
-        update_min_max(0, client_info[0].buf_count);
-    }    
+            num_clients++;
+            /*
+            //update bufora
+            memmove(buf_FIFO[i], &buf_FIFO[0][ile], client_info[i].buf_count - ile);            
+            client_info[i].buf_count -= ile;
+            //if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
+            update_min_max(0, client_info[i].buf_count);
+            */
+        }
+    }
+
+    if (num_clients) last_nr++;
+ 
 } 
-
 
 
 

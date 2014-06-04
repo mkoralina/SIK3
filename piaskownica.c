@@ -208,3 +208,46 @@ void match_and_execute(char *datagram, int clientid, int len) {
         if (DEBUG) printf("niewlasciwy format, datagram: %s\n",datagram);
     }
 } 
+
+
+
+
+
+
+//COS TU NIE DZIALA, PRZESYLA PUSTE DANE, ALE KOMPLETNIE NIE WIEM CZEMU
+void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
+    
+    struct mixer_input inputs[MAX_CLIENTS];
+    char output_buf[BUF_SIZE];
+    memset(output_buf, 0, BUF_SIZE);
+    size_t output_size = BUF_SIZE;
+    int num_clients = 0;
+
+    int i;
+    for(i = 0; i < MAX_CLIENTS; i++) {
+        //jesli klient jest w systemie i jego kolejka aktywna
+        if(activated[i]) { //TODO
+        //if(clients[i].ev && client_info[i].buf_state == ACTIVE){       
+            inputs[num_clients].data = buf_FIFO[i];
+            inputs[num_clients].len = client_info[i].buf_count;
+            num_clients++;
+        }
+    }
+        
+    if (activated[0]) mixer(inputs, num_clients, output_buf, &output_size, interval);
+
+           //TODO rozbudowac dla wszytskich klientow
+//na razie przesylam tylko do jednego kolesia i tak
+    if (activated[0]) {
+        int ile = min(output_size, client_info[i].buf_count);
+        send_DATA_datagram(output_buf, last_nr, client_info[0].ack, fifo_queue_size - client_info[0].buf_count, 0, ile);
+        last_nr++;
+
+        //update bufora
+        
+        memmove(buf_FIFO[0], &buf_FIFO[0][ile], client_info[0].buf_count - ile);            
+        client_info[0].buf_count -= ile;
+        //if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
+        update_min_max(0, client_info[0].buf_count);
+    }    
+} 
