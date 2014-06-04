@@ -69,8 +69,8 @@ char server_name[NAME_SIZE];
 int retransfer_lim = RETRANSMIT_LIMIT;
 evutil_socket_t sock_udp;
 evutil_socket_t sock_tcp;
-struct sockaddr_in6 my_address;
-socklen_t rcva_len = (socklen_t) sizeof(my_address);
+struct sockaddr_in6 server_address;
+socklen_t rcva_len = (socklen_t) sizeof(server_address);
 int last_sent = -1; /* nr z polecen */
 int ack = -1;
 int win = 0;
@@ -240,8 +240,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
             
         
     memset(datagram, 0, sizeof(datagram)); 
-    len = recvfrom(sock_udp, datagram, RCV_SIZE, flags,
-            (struct sockaddr *) &server_udp, &rcva_len); 
+    len = recv(sock_udp, datagram, RCV_SIZE, flags); 
    // fprintf(stderr, "read_from_udp len = %d\n",len);
     //write(1,datagram, len);
     //fprintf(stderr, "datagram: %s\n",datagram );
@@ -316,8 +315,7 @@ void send_datagram(char *datagram, int len) {
     ssize_t snd_len;
     int flags = 0;
 
-    snd_len = sendto(sock_udp, datagram, len, flags,
-            (struct sockaddr *) &my_address, rcva_len);
+    snd_len = send(sock_udp, datagram, len, flags);
     fprintf(stderr, "snd_len %d\n",snd_len);                      
     
     if (snd_len != len) {    
@@ -442,6 +440,51 @@ void read_CLIENT_datagram() {
 
 
 evutil_socket_t create_UDP_socket() {
+    
+    evutil_socket_t sock;
+    struct addrinfo *addr;
+    struct addrinfo addr_h = {
+        .ai_flags = 0,
+        .ai_family = AF_UNSPEC,
+        .ai_socktype = SOCK_DGRAM,
+        .ai_protocol = 0,
+        .ai_addrlen = 0,
+        .ai_addr = NULL,
+        .ai_canonname = NULL,
+        .ai_next = NULL
+    };
+
+    int port_size = (int) ((floor(log10(port_num))+1)*sizeof(char));    
+    char str_port[port_size];
+    sprintf(str_port, "%d", port_num);
+
+
+    if(getaddrinfo(server_name, str_port, &addr_h, &addr)) {
+        fprintf(stderr, "Error on getaddrinfo udp");
+    }
+    sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+    if(!sock) {
+        //syserr("socket udp");
+        syserr("Error socket udp\n");
+    }
+    if(connect(sock, addr->ai_addr, addr->ai_addrlen) < 0) {
+        //syserr("Can not connect to serwer udp");
+        syserr("Can not connect to serwer udp\n");
+    }
+    if(evutil_make_socket_nonblocking(sock)) {
+        //syserr("error in evutil_make_socket_nonblocking");
+        syserr("Error in evutil_make_socket_nonblocking\n");
+    }
+
+    server_address.sin6_family = AF_INET6; 
+    server_address.sin6_addr = in6addr_any; //a nie ten wybrany?
+    server_address.sin6_port = htons((uint16_t) port_num);
+    
+    return sock;
+ }   
+
+/*
+    
     int sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (sock < 0) {
         syserr("socket");
@@ -459,12 +502,13 @@ evutil_socket_t create_UDP_socket() {
         finish = TRUE;
     }
 
-    my_address.sin6_family = AF_INET6; 
-    my_address.sin6_addr = in6addr_any; 
-    my_address.sin6_port = htons((uint16_t) port_num);
+    server_address.sin6_family = AF_INET6; 
+    server_address.sin6_addr = in6addr_any; 
+    server_address.sin6_port = htons((uint16_t) port_num);
     if (DEBUG) printf("Stworzyl gniazdo UDP\n");
     return sock;
-}  
+    
+}*/
 
 void match_and_execute(char *datagram, int len) {
     int nr;

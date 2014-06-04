@@ -259,10 +259,10 @@ void send_datagram(char *datagram, int clientid, int len) {
 
     struct sockaddr_in6 client_address;
     client_address.sin6_family = AF_INET6; 
-    client_address.sin6_addr = in6addr_any; //TODO: zakomentowac to?
-    client_address.sin6_port = htons((uint16_t) client_info[clientid].port_UDP);
-    client_address.sin6_flowinfo = 0; /* IPv6 flow information */
-    client_address.sin6_scope_id = 0;
+    client_address.sin6_addr = client_info[clientid].addr_UDP; //TODO: zakomentowac to?
+    client_address.sin6_port = htons(client_info[clientid].port_UDP);
+    //client_address.sin6_flowinfo = 0; /* IPv6 flow information */
+    //client_address.sin6_scope_id = 0;
 
     ssize_t snd_len;
     int flags = 0;
