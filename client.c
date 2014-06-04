@@ -53,7 +53,7 @@
 
 
 #define PORT 14666
-#define BUF_SIZE 200
+#define BUF_SIZE 10000
 #define RCV_SIZE 64000 
 #define NAME_SIZE 100 //TODO: ile to ma byc?
 #define RETRANSMIT_LIMIT 10 

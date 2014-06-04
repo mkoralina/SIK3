@@ -19,7 +19,7 @@
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 0 
+#define DEBUG 1 
 
 #define BUF_SIZE 64000 //TODO: 64 000
 
@@ -822,40 +822,21 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     if (activated[0]) {
 
+        struct mixer_input inputs[MAX_CLIENTS];
+        inputs[0].data = buf_FIFO[0];
+        inputs[0].len = client_info[0].buf_count;
+
         char output_buf[BUF_SIZE];
+        memset(output_buf, 0, BUF_SIZE);
         size_t output_size = BUF_SIZE;
 
-        char * input;
+        size_t n = 1;
+        mixer(inputs, n, output_buf, &output_size, interval);
 
-        output_size = min(output_size, 880);
-
-        input = buf_FIFO[0];
-
-        int16_t * int_input;
-        int_input = (int16_t *) ((void*) input);
-
-        memset(output_buf, 0, BUF_SIZE);
-        int16_t * int_output = (int16_t *) output_buf;
-
-        int16_t num;
-        int16_t sum;
-        int j;
-
-        for (j = 0; j < output_size; j++) {
-            if (client_info[0].buf_count > j) 
-                num = int_input[j];         
-            if (num != 0) { //TODO: otwierdzic, ze dziala
-                if (num >= 0) 
-                    int_output[j] = min(int_output[j] + num, MAX_SHORT_INT);                
-                else 
-                    int_output[j] = max(int_output[j] + num, MIN_SHORT_INT);                        
-            }
-        }
-        
-    
+           
 
         int ile = min(880, client_info[0].buf_count);
-        send_DATA_datagram(int_output, last_nr, client_info[0].ack, fifo_queue_size - client_info[0].buf_count, 0, ile);
+        send_DATA_datagram(output_buf, last_nr, client_info[0].ack, fifo_queue_size - client_info[0].buf_count, 0, ile);
         last_nr++;
 
         //update bufora
@@ -865,6 +846,8 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         update_min_max(0, client_info[0].buf_count);
     }    
 } 
+
+
 
 
 

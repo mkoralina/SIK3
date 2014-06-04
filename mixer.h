@@ -36,8 +36,49 @@ struct mixer_input {
 
 
 
-//TODO
 void mixer(struct mixer_input* inputs, size_t n, void* output_buf,                      
+    size_t* output_size, unsigned long tx_interval_ms) {
+    
+    fprintf(stderr, "MIXER\n");
+
+    memset(output_buf, 0, *output_size);
+
+    char * input;
+
+    *output_size = min(*output_size, 176*tx_interval_ms);
+
+    input = inputs[0].data;
+
+    int16_t * int_input;
+    int_input = (int16_t *) ((void*) input);
+
+    
+    int16_t * int_output = (int16_t *) output_buf;
+
+    int16_t num;
+    int16_t sum;
+    int j;
+
+    for (j = 0; j < *output_size; j++) {
+        if (inputs[0].len > j) {//na sztywno bardzo TODO
+            num = int_input[j];         
+            if (num != 0) { //TODO: otwierdzic, ze dziala
+                if (num >= 0) 
+                    int_output[j] = min(int_output[j] + num, MAX_SHORT_INT);                
+                else 
+                    int_output[j] = max(int_output[j] + num, MIN_SHORT_INT);                        
+            }
+        }
+            
+    }        
+    fprintf(stderr, "END OF MIXER\n");
+
+}
+
+
+
+//TODO
+void mixer1(struct mixer_input* inputs, size_t n, void* output_buf,                      
     size_t* output_size, unsigned long tx_interval_ms) {
     // n - liczba aktywnych klientow
 
