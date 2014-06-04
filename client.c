@@ -67,7 +67,7 @@
 int port_num = PORT;
 char server_name[NAME_SIZE];
 int retransfer_lim = RETRANSMIT_LIMIT;
-int sock_udp;
+evutil_socket_t sock_udp;
 evutil_socket_t sock_tcp;
 struct sockaddr_in6 my_address;
 socklen_t rcva_len = (socklen_t) sizeof(my_address);
@@ -311,13 +311,14 @@ void reboot() {
 
 
 void send_datagram(char *datagram, int len) {
-    //fprintf(stderr, "datagram: %s\n",datagram );
+    fprintf(stderr, "datagram: %s\n",datagram );
 
     ssize_t snd_len;
     int flags = 0;
 
     snd_len = sendto(sock_udp, datagram, len, flags,
-            (struct sockaddr *) &my_address, rcva_len);              
+            (struct sockaddr *) &my_address, rcva_len);
+    fprintf(stderr, "snd_len %d\n",snd_len);                      
     
     if (snd_len != len) {    
         perror("partial / failed sendto");
@@ -440,7 +441,7 @@ void read_CLIENT_datagram() {
 
 
 
-int create_UDP_socket() {
+evutil_socket_t create_UDP_socket() {
     int sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (sock < 0) {
         syserr("socket");

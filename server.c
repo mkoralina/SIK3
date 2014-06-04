@@ -32,7 +32,7 @@ int fifo_high;
 int buf_length = BUF_LEN;
 unsigned long interval = TX_INTERVAL;
 unsigned long long last_nr = 0; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
-int sock_udp;
+evutil_socket_t sock_udp;
 evutil_socket_t sock_tcp;
 struct event_base *base;
 int finish = 0;
@@ -493,8 +493,7 @@ void init_client_info() {
   	}
 }
 
-
-int create_UDP_socket() {
+evutil_socket_t create_UDP_socket() {
 	struct sockaddr_in6 server;
     int on = 1;
 	int sock = socket(AF_INET6, SOCK_DGRAM, 0); 
@@ -854,13 +853,13 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
             fprintf(stderr, "ile = %d\n",ile );
             fprintf(stderr, "output_size = %d\n",output_size);
             //ile = output_size;
-            send_DATA_datagram(output_buf, last_nr, client_info[i].ack, fifo_queue_size - client_info[i].buf_count, 0, ile); //TODO to nie powinno byc ile, ale output_size, ale wtedy nie dziala
+            send_DATA_datagram(output_buf, last_nr, client_info[i].ack, fifo_queue_size - client_info[i].buf_count, i, ile); //TODO to nie powinno byc ile, ale output_size, ale wtedy nie dziala
             
             //update bufora
-            memmove(buf_FIFO[i], &buf_FIFO[0][ile], client_info[i].buf_count - inputs[num_clients].consumed);            
+            memmove(buf_FIFO[i], &buf_FIFO[i][ile], client_info[i].buf_count - inputs[num_clients].consumed);            
             client_info[i].buf_count -= inputs[num_clients].consumed;
             //if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
-            update_min_max(0, client_info[i].buf_count);
+            update_min_max(i, client_info[i].buf_count);
 
             num_clients++;
         }
