@@ -43,22 +43,22 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
     memset(output_buf, 0, *output_size);
 
-    char * input;
-
     int target = 176 * tx_interval_ms;
 
     *output_size = min(*output_size, target);
 
-    input = inputs[0].data;
+    int16_t * int_input[n];
+
 
     int i;
     for(i = 0; i < n; i++) {
         inputs[i].consumed = min(inputs[i].len, target);
+        int_input[i] = (int16_t *) ((void*) inputs[i].data);
     }     
 
 
-    int16_t * int_input;
-    int_input = (int16_t *) ((void*) input);
+    
+    
 
     
     int16_t * int_output = (int16_t *) output_buf;
@@ -67,18 +67,19 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     int16_t sum;
     int j;
 
+    
     for (j = 0; j < *output_size; j++) {
         int_output[j] = 0;
-        if (inputs[0].len > j) {//na sztywno bardzo TODO
-            num = int_input[j];         
-            if (num != 0) { //TODO: otwierdzic, ze dziala
+        for(i = 0; i < n; i++) {            
+            if (inputs[i].len > j) {//na sztywno bardzo TODO
+                num = int_input[i][j];  
                 if (num >= 0) 
                     int_output[j] = min(int_output[j] + num, MAX_SHORT_INT);                
                 else 
                     int_output[j] = max(int_output[j] + num, MIN_SHORT_INT);                        
+                
             }
-        }
-            
+        }                
     }        
 
 }

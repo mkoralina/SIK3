@@ -863,13 +863,6 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
             update_min_max(0, client_info[i].buf_count);
 
             num_clients++;
-            /*
-            //update bufora
-            memmove(buf_FIFO[i], &buf_FIFO[0][ile], client_info[i].buf_count - ile);            
-            client_info[i].buf_count -= ile;
-            //if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
-            update_min_max(0, client_info[i].buf_count);
-            */
         }
     }
 
