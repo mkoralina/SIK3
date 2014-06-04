@@ -10,7 +10,7 @@ all: $(TARGETS)
 client: client.o err.o err.h header.h
 	$(CC) $(CFLAGS) $^ -o $@ -levent -lm 
 
-server: server.o err.o err.h mixer.h header.h
+server: server.o err.o err.h header.h
 	$(CC) $(CFLAGS) $^ -o $@ -levent -lm
 
 clean:

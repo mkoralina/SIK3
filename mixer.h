@@ -64,40 +64,9 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
     *output_size  = target_size;
 
-    //DEBUG
-    //fprintf(stderr, "inputs[0].data: %s\n", (char *) inputs[0].data); //tutaj sie nic nie wyswietla
-    //fprintf(stderr, "inputs[0].len  = %d\n", inputs[0].len); //10560 glownie 
-    //write(1,inputs[0].data,inputs[0].len); //dziala, ale mega w zwolnionym tempie i naklada sie, bo to cala dlugosc odtwarzam, a nie tylko target size 
-    //target size nie dziala
-
-
-    //ATRAPA 2
-    //w taki sposób (nie) działa...
-    /*
-    char a[inputs[0].len];
-    memset(a, 0 , inputs[0].len);
-    size_t ile = 880;
-    memcpy(a, inputs[0].data, inputs[0].len);
-    fprintf(stderr, "inputs[0].len = %d\n", inputs[0].len);
-    int w = write(1, &a[0], ile);
-    fprintf(stderr, "WYPISANO w = %d\n",w );
-    if (w < 0) {
-        syserr("blad we write");
-        exit(EXIT_SUCCESS);
-    }
-*/
-
-    // wciaz ATRAPA - przesylam tylko dane zerowego bufora (=klienta)
-    /*
-    int ile_moge = min(176 * tx_interval_ms, *output_size);
-    ile_moge = min(ile_moge, inputs[0].len);
-    char atrapa[ile_moge+1];
-    memset(atrapa, 0, ile_moge);
-    memcpy(atrapa, inputs[0].data, ile_moge);
-    atrapa[ile_moge] = 0;
-    fprintf(stderr, "zaraz sprobuje wypisac atrape o dlugosci ile moge = %d\n",ile_moge);
-    //write(1,atrapa,ile_moge+1);
-    */
+    //int ile = min(inputs[0].len, 880);
+    //send_data(inputs[0].data,ile);
+    //return;
 
     //inicjalizacja na zera?
     //for (i = 0; i < n; i++) {
@@ -106,8 +75,10 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
 
 
     for (i = 0; i < n; i++) {
-        //tutaj musze alokowac pamiec? jesli to jest tylko castowanie? to ma wskaxnik chyba tylko, nie?
+        //tutaj musze alokowac pamiec? jesli to jest tylko castowanie? tTAK
         int_input[i] = (int16_t *) inputs[i].data;
+        //fprintf(stderr, "inputs[i].data %p\n",inputs[i].data ); //ten sam adres
+        //fprintf(stderr, "int_input[i] %p\n",int_input[i] ); //ten sam adres
         inputs[i].consumed = min (inputs[i].len, target_size); 
     }
 
@@ -116,7 +87,8 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     for (j = 0; j < target_size/2; j++) {
         sum = 0;
         for (i = 0; i < n; i++) { 
-            num = int_input[i][j];           
+            num = int_input[i][j];  
+            printf("num = %d\n",num);         
             if (num != 0) { //TODO: nie wiem, cz to dziala
                 if (num >= 0) 
                     sum = min(sum + num, MAX_SHORT_INT);                

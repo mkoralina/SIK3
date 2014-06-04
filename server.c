@@ -37,7 +37,7 @@ evutil_socket_t sock_tcp;
 struct event_base *base;
 int finish = 0;
 
-
+int pierwszy_poszedl = 0;
 
 
 
@@ -586,6 +586,8 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
 
 
 void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
+
+
     char datagram[BUF_SIZE+1];
     ssize_t len;
                                  
@@ -630,7 +632,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
             }
             //UPLOAD
             else if (sscanf(datagram, "UPLOAD %d", &nr) == 1) {
-                if (DEBUG) printf("Zmatchowano do UPLOAD, nr = %d\n",nr);
+                fprintf(stderr, "Zmatchowano do UPLOAD, nr = %d\n",nr);
 
                 if (DEBUG) printf("WG MEMCHR i odejmowania wskaznikow\n");
                 char * ptr = memchr(datagram, '\n', len);
@@ -639,10 +641,12 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
                 if (DEBUG) printf("header_size = %d\n", header_len);
                 
                 //DEBUG: czy dziala przesylanie danych
-                //write(1, datagram+header_len, data_len);// pyk pyk
+                //write(1, datagram+header_len, data_len);// jak nie wlaczam miksera, to nawet pyk pyk nie ma
                 //write(1, data, data_len); 
 
-                //send_data(datagram+header_len, data_len);
+                //send_data(datagram+header_len, data_len); //jak tu odsyla to dziala ladnie
+
+                //TODO: if data_len > BUF_SIZE -> zapisuje od poczatku koniec danychw cakym buforze + komunikat
 
                 if (client_info[clientid].buf_count == fifo_queue_size) {
                     fprintf(stderr, "client_info[clientid].buf_count %d\n",client_info[clientid].buf_count);
@@ -674,7 +678,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
                 if (DEBUG) printf(" client_info[clientid].buf_count: %d\n", client_info[clientid].buf_count);
                 send_ACK_datagram(client_info[clientid].ack, win, clientid);
 
-                //write(1, buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, data_len);// pyk pyk
+                //send_data(buf_FIFO[clientid] + client_info[clientid].buf_count - data_len, data_len);// ladnie odsyla
             } 
             else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) {
                 int win = fifo_queue_size - client_info[clientid].buf_count;
@@ -796,8 +800,27 @@ void send_data(char * data, size_t size) {
 }
 
 
-
 void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
+    if (activated[0]) {
+        int ile = min(880, client_info[0].buf_count);
+        send_DATA_datagram(buf_FIFO[0], last_nr, client_info[0].ack, fifo_queue_size - client_info[0].buf_count, 0, ile);
+        last_nr++;
+
+        //update bufora
+        memmove(buf_FIFO[0], &buf_FIFO[0][ile], client_info[0].buf_count - ile);            
+        client_info[0].buf_count -= ile;
+        //if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
+        update_min_max(0, client_info[0].buf_count);
+    }
+    
+} 
+
+
+
+
+
+
+void mix_and_send1(evutil_socket_t descriptor, short ev, void *arg) {
     //if (DEBUG) printf("mix_and_send\n");
     //struct mixer_input* inputs = malloc(MAX_CLIENTS * (sizeof(void *) + 2*sizeof(size_t))); //TODO: sprawdzic
 
@@ -805,7 +828,8 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     int target_size = 176 * interval;
     size_t num_of_clients = 0;
 
-    char out[BUF_SIZE] = {0};    
+    char out[BUF_SIZE];
+    memset(out, 0, BUF_SIZE);    
     struct mixer_input inputs[MAX_CLIENTS];
     size_t out_size = BUF_SIZE;
  
@@ -819,50 +843,61 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         //jesli klient jest w systemie i jego kolejka aktywna
         if(clients[i].ev) { //TODO
         //if(clients[i].ev && client_info[i].buf_state == ACTIVE){
-            //fprintf(stderr, "DODAJE KLEITNA %d\n",i );
-            //write(2,buf_FIFO[i],client_info[i].buf_count); //jak tu wypisuje to u gory gra wolniej + pyk pyk
-            /* opcja bez kopiowania */
             inputs[num_of_clients].data = (void *) buf_FIFO[i];
             inputs[num_of_clients].len = client_info[i].buf_count;
-            //write(1,inputs[num_of_clients].data,inputs[num_of_clients].len); //tutaj gra, to baaaardzo wolno i rrrr
+            //fprintf(stderr, "inputs[num_of_clients].data %s\n",(char*)inputs[num_of_clients].data ); // nie wystwietla niczego!
+            //write(1,inputs[num_of_clients].data, inputs[num_of_clients].len);
             num_of_clients++;
         }
     }
 
+    /*
+
 
     if (num_of_clients) {
+        //fprintf(stderr, "out przed mikserem %p\n",out ); //te same out
         mixer(inputs, num_of_clients, out, &out_size, interval); 
         int ile = min(inputs[0].len, 880);
-        send_data(inputs[0].data,ile);
-        //send_data(out, out_size);
+        
+        //fprintf(stderr, "inputs[0].data %p\n",inputs[0].data );
+        //fprintf(stderr, "out po mikserze %p\n",out );// te same out
+        //send_data(inputs[0].data,ile);
+
+
+        //out_size = 880;
+        send_data(out, out_size);
     }
     else {
         out_size = 880;
         char * atrapa = malloc(880);
         memset(atrapa, 0, 880);
         send_data(atrapa, 880);
+        free(atrapa);
     }       
 
     if (DEBUG) printf("ZA MIKSEREM\n");
 
     //output = (char *) output_buf;
-
-    
+*/
 
     /*update buforow*/
+    num_of_clients = 0;
     for(i = 0; i < MAX_CLIENTS; i++) {
         //jesli klient jest w systemie i jego kolejka aktywna TODO
         if(clients[i].ev) {
             if (DEBUG) printf("WSZEDL DO PETLI\n");
-            int offset = min(client_info[i].buf_count,out_size);
+            
+            int offset = min(880, inputs[num_of_clients].len);
+            //int offset = inputs[num_of_clients].consumed;
+            fprintf(stderr, "offset = %d\n",offset );
             memmove(&buf_FIFO[i][0], &buf_FIFO[i][offset], fifo_queue_size - offset);            
             memset(&buf_FIFO[i][offset], 0, offset);
             client_info[i].buf_count -= offset;
             if (DEBUG) printf("client_info[%d].buf_count: %li\n", i,client_info[i].buf_count);
             update_min_max(i, client_info[i].buf_count);
+            num_of_clients++;
         }
     }
-
 }
 
 
@@ -924,6 +959,8 @@ void set_read_event() {
     read_event =
         event_new(base, sock_udp, EV_READ|EV_PERSIST, read_from_udp, NULL); 
     if(!read_event) syserr("event_new");
+   // if (event_priority_set(read_event, 1) < 0)
+    //    syserr("event priority set"); 
     if(event_add(read_event,NULL) == -1) syserr("event_add udp");
 }
 

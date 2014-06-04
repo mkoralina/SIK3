@@ -366,6 +366,7 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
     memcpy(datagram, header, strlen(header));
     memcpy(datagram + strlen(header), data, data_size);
 
+    //fprintf(stderr, "datagram %s\n",datagram );
     send_datagram(datagram, len); //TODO 
 
 //write(1,data,data_size); //brzmi dokładnie tak jak w serwerze na razie
@@ -471,6 +472,7 @@ void match_and_execute(char *datagram, int len) {
     //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
     if (sscanf(datagram, "DATA %d %d %d", &nr, &ack, &win) == 3) {
         DATAs_since_last_datagram++;
+        fprintf(stderr, "DATAs = %d\n",DATAs_since_last_datagram );
         if (ack == last_sent+1 && win > 0) {
             if(event_add(stdin_event,NULL) == -1) syserr("event_add");
         }
@@ -483,7 +485,7 @@ void match_and_execute(char *datagram, int len) {
             //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac i dopisac rozmiar do parametrow
             DATAs_since_last_datagram = 0;
         }
-        //fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
+        fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
         
 
         
