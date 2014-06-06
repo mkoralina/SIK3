@@ -187,7 +187,7 @@ void init_clients(void)
     }
 }
 
-//zamienia adres typu sockaddr_in6 klienta na string 
+//zamienia adres typu sockaddr_in6 klienta na char *
 char * addr_to_str(struct sockaddr_in6 *addr) {
     char str[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);

@@ -3,64 +3,14 @@
  Data: 13.05.2014r. 
 */
 
+#include "header.h"
 
-#include <event2/event.h>
-#include <event2/buffer.h>
-#include <event2/util.h>
-
-#include <errno.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <pthread.h> 
-#include <signal.h> 
-#include <netinet/tcp.h> //nagle
-#include "inttypes.h" 
-
-
-// snprintf
-#include <stdio.h>
-#include <stdint.h>
-#include <inttypes.h>
-
-
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <string.h> /* strcmp */
-#include "err.h"
-#include <time.h>
-#include <math.h> 
-
-#ifndef max
-#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
-#endif
-
-#ifndef min
-#define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
-#endif 
-
-
-#define PORT 14666
+#define PORT  14666
 #define BUF_SIZE 10000
 #define RCV_SIZE 64000 
 #define NAME_SIZE 100 //TODO: ile to ma byc?
 #define RETRANSMIT_LIMIT 10 
 #define DATAGRAM_SIZE 10000 
-
-#define TRUE 1
-#define FALSE 0
 
 #define DEBUG 0
 
@@ -71,25 +21,15 @@ evutil_socket_t sock_udp;
 evutil_socket_t sock_tcp;
 struct sockaddr_in6 server_address;
 socklen_t rcva_len = (socklen_t) sizeof(server_address);
-int last_sent = -1; /* nr z polecen */
+int last_sent = -1; //numer ostatnio wyslanego datagramu DATA
 int ack = -1;
 int win = 0;
-int clientid = -1; /* -1 to kleint niezidentyfikowany */
+int clientid = -1; //nr = -1 oznacza brak identyfikacji
 int nr_expected = -1;
 int nr_max_seen = -1;
 int connection_lost = 0;
 char * last_datagram;
 int DATAs_since_last_datagram = 0;
-int finish = 0;
-time_t last_reboot;
-time_t last_to_one_reboot;
-
-
-
-pthread_t keepalive_thread = 0;
-pthread_t event_thread = 0;
-pthread_t main_thread = 0;
-pthread_t stdin_thread = 0;
 
 
 struct event_base *base;
@@ -106,15 +46,16 @@ struct addrinfo addr_hints = {
     .ai_next = NULL
 };
 
-void get_parameters(int argc, char *argv[]) {
-    
+//TODO: obsluga blednego formatu
+//wczytuje wartosci parametrow z wejscia
+void get_parameters(int argc, char *argv[]) {    
     int server_name_set = 0;
     int j;
     for (j = 1; j < argc; j++)  
     {
         if (strcmp(argv[j], "-p") == 0)  
         {
-            port_num = atoi(argv[j+1]); // to jest w ogóle opcjonalne -> PSRAWDZ!!!
+            port_num = atoi(argv[j+1]); 
         }
         else if (strcmp(argv[j], "-s") == 0)
         {    
@@ -124,7 +65,7 @@ void get_parameters(int argc, char *argv[]) {
         }
         else if (strcmp(argv[j], "-X") == 0)
         {
-            retransfer_lim = atoi(argv[j+1]); // TODO: wywali blad, jesli X nie jest intem?
+            retransfer_lim = atoi(argv[j+1]); 
         }
     }
     
@@ -139,54 +80,38 @@ void get_parameters(int argc, char *argv[]) {
     }
 }
 
+//czyta muzyke ze standardowego wejscia i przesyla do serwera po UDP
 void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
-    //printf("Czytanie z stdin\n");
     char buf[BUF_SIZE+1];
     memset(buf, 0, sizeof(buf));
     
-    if (ack > last_sent && win > 0) { 
-
-        //TODO: blokowanie wejscia - usuniecie zupelnie tego eventu
-        //TODO: blokowanie wejscia w ronzyhc sytuacjach
-
-        //fprintf(stderr,"(ack, last, win) = (%d, %d, %d)\n",ack, last_sent,win);           
+    if (ack > last_sent && win > 0) { ;           
         if (DEBUG) printf("read\n");
-        int to_read = min(win, BUF_SIZE);
-        
-
+        int to_read = min(win, BUF_SIZE); 
         int r = read(0, buf, to_read);
-        //fprintf(stderr, "Przeczytalem %d bajtow\n",r);
         if(r < 0) {
             fprintf(stderr, "w evencie: read (from stdin)\n");
             syserr("DEBUG: blad");
-            finish = TRUE;
-            stdin_thread = 0;
-            void* ret = NULL;
-            pthread_exit(&ret);
+            //TODO
         }    
         if(r == 0) {
             fprintf(stderr,"stdin closed. Exiting event loop.\n");
             syserr("DEBUG: blad");
-            finish = TRUE;
-            stdin_thread = 0;
-            void* ret = NULL;
-            pthread_exit(&ret);
-                
+            //TODO                
         }
         if (r > 0) {
-            //write(1,buf,r);
             last_sent++;
-            send_UPLOAD_datagram(buf, last_sent, r); 
-            //write(1, buf, r);                            
+            send_UPLOAD_datagram(buf, last_sent, r);                            
         }
         memset(buf, 0, sizeof(buf));
     } 
     else {
+        //blokuje stdin
         event_del(stdin_event);   
-    }
-      
+    }      
 }
 
+//wydarzenie czytajace dane od klienta z stdin
 void set_stdin_event() {
     int stdin = 0;
     stdin_event =
@@ -195,27 +120,23 @@ void set_stdin_event() {
     if(event_add(stdin_event,NULL) == -1) syserr("event_add"); 
 }
 
-/* Funkcja czyta z TCP, wyrzuca raporty na stderr */
+//czyta po TCP 1. datagram CLIENT oraz raporty, ktore wyswietla na stderr
 void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg)
 {  
     // TODO: kontrola, czy jest caly czas polaczenie, czyli pewnie jakiś timeout trzeba ustawic!
-
     if (clientid < 0) {
         read_CLIENT_datagram();
     }
 
-    //fprintf(stderr, "RAPORT RAPORT\n");
-
     char buf[BUF_SIZE+1];
     int r = read(sock_tcp, buf, BUF_SIZE);
-    //fprintf(stderr, "PRZECZYTALEN RAPORT dlugosci %d\n",r );
     if(r == -1) syserr("fail on read_from_tcp"); //TODO: reboot
-    buf[r] = 0; //znak konca na koniec
-    fprintf(stderr, "%s", buf); //wypisuje raport   
- 
+    buf[r] = 0; //znak konca 
+    fprintf(stderr, "%s", buf); 
     return;
 }
 
+//wydarzenie czytjace z TCP
 void set_tcp_event() {
     struct event *tcp_event =
         event_new(base, sock_tcp, EV_READ|EV_PERSIST, read_from_tcp, NULL); 
@@ -223,13 +144,8 @@ void set_tcp_event() {
     if(event_add(tcp_event,NULL) == -1) syserr("event_add");    
 }
 
+//czyta datagramy od serwera przesylane po UDP
 void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
-    // TODO: cala komunikacja jako odbiorca po UDP (powinien wystarczyc jeden watek)
-    // czytanie w petli z UDP (jaka dlugosc? czy na pewno dobrze wczyta? czy moze nie zdazyc wczytac i np. beda juz dw w srodku? na pewno! co wtedy ?)
-    // matchowanie komunikatow
-    // obsluga komunikatow
-
-    fprintf(stderr, "PYK PYK\n");
 
     ssize_t len;
     char datagram[RCV_SIZE+1];
@@ -237,34 +153,23 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     int flags = 0; 
     struct sockaddr_in6 server_udp;
     socklen_t rcva_len = (ssize_t) sizeof(server_udp);
-            
         
     memset(datagram, 0, sizeof(datagram)); 
-    len = recv(sock_udp, datagram, RCV_SIZE, flags); 
-   // fprintf(stderr, "read_from_udp len = %d\n",len);
-    //write(1,datagram, len);
-    //fprintf(stderr, "datagram: %s\n",datagram );
-
+    len = recv(sock_udp, datagram, RCV_SIZE, flags);
 
     if (len < 0) {
-        //klopotliwe polaczenie z serwerem
+        //klopotliwe polaczenie z serwerem TODO
         perror("error on datagram from server socket/ timeout reached");
         if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
         //reboot(); //TODO
     }    
-    else {
-        if (DEBUG) {
-            //(void) printf("read through UDP from [adres:%d]: %zd bytes: %.*s\n", ntohs(server_udp.sin6_port), len,
-            //    (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
-            //printf("Otrzymano: %s\n", datagram);
-        }    
+    else { 
+        //matchowanie datagramu do wzorcow i dalsza obsluga   
         match_and_execute(datagram, len);    
-    }
-
-    
+    }    
 }
 
-
+//wydarzenie czytajace z UDP
 void set_udp_event() {
     struct event *udp_event =
         event_new(base, sock_udp, EV_READ|EV_PERSIST, read_from_udp, NULL); 
@@ -272,13 +177,14 @@ void set_udp_event() {
     if(event_add(udp_event,NULL) == -1) syserr("event_add");    
 }
 
+//przesyla po UDP datagram KEEPALIVE 
 void send_KEEPALIVE_datagram(evutil_socket_t descriptor, short ev, void *arg) {
-    //TODO: warunek stopu
     char *datagram = "KEEPALIVE\n";
     send_datagram(datagram, strlen(datagram));
     return 0;    
 }
 
+//wydarzenie przesylajace co 0,1s datagram KEEPALIVE
 void set_keepalive_event() {
     struct timeval wait_time = { 0, 100000 }; // { s, micro_s}
     struct event *keepalive_event =
@@ -287,28 +193,34 @@ void set_keepalive_event() {
     if(event_add(keepalive_event,&wait_time) == -1) syserr("event_add");  
 }
 
+//tworzy wydarzenia w systemie
 void set_events() {
     set_stdin_event();
-    set_tcp_event(); // po przeczytaniu CLIENT datagram set_keepalive_event();
+    set_tcp_event(); // po przeczytaniu datagramu CLIENT nastepuje set_keepalive_event();
     set_udp_event();
 }
 
-
-
+//restartuje prace klienta
 void reboot() {
-    if (DEBUG) printf("REBOOT\n");
-    finish = TRUE; 
+    //zwalnia zasoby i zamyka zdarzenia
+    //(event_base_loopbreak(base) == -1)
+    event_base_free(base);
+    //TODO
 
-    //wait 500ms
+    //czeka 500ms
     struct timespec tim, tim2;
     tim.tv_sec = 0;
     tim.tv_nsec = 500 * 1000000; 
     nanosleep(&tim, &tim2); 
-    //reopen
+    
+    //restartuje klienta
+    // sprawdz czy jest polaczone udp, bo do tego nie musi sie podlaczac jesli tak, jesli nie, to musi
+    //tcp zawsze musi
+    //moze tez jakis main loopp po prostu
     set_events(); //TODO: o ile blad nie wystapil gdzies wczesniej przy tworzeniu gniazda albo bazy
 }
 
-
+//wysyla datagram o dlugosci len do serwera po UDP
 void send_datagram(char *datagram, int len) {
     fprintf(stderr, "datagram: %s\n",datagram );
 
@@ -318,16 +230,16 @@ void send_datagram(char *datagram, int len) {
     snd_len = send(sock_udp, datagram, len, flags);
     fprintf(stderr, "snd_len %d\n",snd_len);                      
     
-    if (snd_len != len) {    
+    if (snd_len != len) {  
+        //TODO: oblusga  
         perror("partial / failed sendto");
         free(datagram);
-        //TODO: na pewno to?
-        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do gory
     }        
 }
 
-void send_CLIENT_datagram(uint32_t id) {       
-
+//wysyla datagram identyfikacyjny CLIENT ze swoim numerem id
+void send_CLIENT_datagram(uint32_t id) { 
     char clientid[11]; /* 11 bytes: 10 for the digits, 1 for the null character */
     snprintf(clientid, sizeof(clientid), "%" PRIu32, id); 
 
@@ -339,11 +251,8 @@ void send_CLIENT_datagram(uint32_t id) {
     free(datagram);
 }
 
-
-void send_UPLOAD_datagram(void *data, int no, int data_size) {    
-    //printf("WcHOZE\n");
-    //fprintf(stderr, "data UPLOAD: %*s\n",data_size,data);
-
+//wysyla no-ty datagram typu UPLOAD z danymi data o dlugosci data_size
+void send_UPLOAD_datagram(void *data, int no, int data_size) { 
     int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
     int str_size = (int) ((floor(log10(num))+1)*sizeof(char));
@@ -352,37 +261,28 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
     sprintf(str, "%d", no);
 
     char* type= "UPLOAD";
-
-
-    char* datagram = malloc(strlen(type) + strlen(str) + 2 + data_size); // na spacje, \n i \0
-
+    char* datagram = malloc(strlen(type) + strlen(str) + 2 + data_size);
     int len = strlen(type) + strlen(str) + 2 + data_size; //dlugosc calego datagramu 
-   
-    //fprintf(stderr, "data: %s\n",data );
 
     char * header = malloc(strlen(type) + strlen(str) + 3);
     sprintf(header, "%s %s\n", type, str);
     memcpy(datagram, header, strlen(header));
     memcpy(datagram + strlen(header), data, data_size);
 
-    //fprintf(stderr, "datagram %s\n",datagram );
-    send_datagram(datagram, len); //TODO 
-
-//write(1,data,data_size); //brzmi dokładnie tak jak w serwerze na razie
+    send_datagram(datagram, len); 
     
+    //kopiuje tresc datagramu do zmiennej trzymajacej ostatnio wyslany datagram
     memset(last_datagram, 0, len);
     memcpy(last_datagram, data, len);
 
-//    memset(last_datagram, 0, strlen(last_datagram));
-//    memcpy(last_datagram, data, strlen(data));
-    //write(1, data, data_size); dziala tutaj, ale juz duzo wiecej trzaskow, dzwiek wolniej, trzaski duzo szybciej
     free(header);
     free(datagram);    
 }
 
+//wysyla prosbe o retransmisje serwer->klient datagramow DATA o numerach <= no 
 void send_RETRANSMIT_datagram(int no) {
     int num = no;
-    if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
+    if (!no) num = 1; //na wypadek gdyby nr = 0 i log(0)
     int str_size = (int) ((floor(log10(num))+1)*sizeof(char));
 
     char str[str_size];
@@ -396,26 +296,19 @@ void send_RETRANSMIT_datagram(int no) {
     free(datagram);
 }
 
-
-
-
-/* Obsługa sygnału kończenia */
+//TODO
+//obsluguje Ctrl+C
 static void catch_int (int sig) {
-    /* zwalniam zasoby */
-    //ogarnic te watki i zwalnianie pamieci po mallocu
-    finish = TRUE;
-    if (DEBUG) {
-        printf("Exit() due to Ctrl+C\n");
-    }
-    //nie wiem, czy nie musi czasem sprawdzac, czy juz cos nie zamknelo
+    //zwalnia zasoby
+
+    //zamyka wydarzenia
+
+    free(last_datagram);
     if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
     exit(EXIT_SUCCESS);
 }
 
-
-
-
-
+//potwierdza nawiazanie polaczenia TCP z serwerem i odbiera numer identyfikacyjny
 void read_CLIENT_datagram() {
     if (DEBUG) {
         printf("read_CLIENT_datagram\n");
@@ -432,15 +325,13 @@ void read_CLIENT_datagram() {
         }
     }
     
+    //przesyla UDP potwierdzenie odebrania datagramu
     send_CLIENT_datagram(clientid);  
     set_keepalive_event();
 }
 
-
-
-
-evutil_socket_t create_UDP_socket() {
-    
+//otwiera gniazdo UDP
+evutil_socket_t create_UDP_socket() {    
     evutil_socket_t sock;
     struct addrinfo *addr;
     struct addrinfo addr_h = {
@@ -481,40 +372,12 @@ evutil_socket_t create_UDP_socket() {
     server_address.sin6_port = htons((uint16_t) port_num);
     
     return sock;
- }   
+}   
 
-/*
-    
-    int sock = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        syserr("socket");
-    }
-
-    //timeout do wykrywania klopotow z polaczeniem
-    //"Jeśli klient przez sekundę nie otrzyma żadnych danych 
-    //od serwera (choćby pustego datagramu DATA), uznaje połączenie za kłopotliwe."
-    struct timeval tv;
-    tv.tv_sec = 30; //TODO: zmien na 1s
-    tv.tv_usec = 0;
-
-    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
-        perror("Error");
-        finish = TRUE;
-    }
-
-    server_address.sin6_family = AF_INET6; 
-    server_address.sin6_addr = in6addr_any; 
-    server_address.sin6_port = htons((uint16_t) port_num);
-    if (DEBUG) printf("Stworzyl gniazdo UDP\n");
-    return sock;
-    
-}*/
-
+//dopasowuje datagram o dlugosci len do wzorca, obsluguje jego odbior
 void match_and_execute(char *datagram, int len) {
     int nr;
-    //char data[BUF_SIZE+1];
-    //memset(data, 0, BUF_SIZE);
-    //zakladam, ze komunikaty sa poprawne z protokolem, wiec 3. pierwsze argumenty musza byc intami, 4. moze byc pusty
+    //DATA
     if (sscanf(datagram, "DATA %d %d %d", &nr, &ack, &win) == 3) {
         DATAs_since_last_datagram++;
         fprintf(stderr, "DATAs = %d\n",DATAs_since_last_datagram );
@@ -532,22 +395,14 @@ void match_and_execute(char *datagram, int len) {
         }
         fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
         
-
-        
-
         char * ptr = memchr(datagram, '\n', len);
         int header_len = ptr - datagram + 1;
         int data_len = len - header_len; 
         if (DEBUG) printf("header_size = %d\n", header_len);
-        //fprintf(stderr, "data_len = %d\n",data_len);
-        //fprintf(stderr, "data z DATA: %s\n", datagram+header_len);
-        //gdy jest to nasz pierwszy DATA datagram 
-        //fprintf(stderr, "data: %s\n", datagram+header_len);
 
         if (nr_expected == -1) {
             nr_expected = nr + 1;
-            write(1,datagram+header_len,data_len); //TODO!
-            //printf("%s\n",data); // TODO! odkomentowac
+            write(1,datagram+header_len,data_len); 
         }
         else if (nr > nr_expected) {
             if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {                
@@ -556,41 +411,36 @@ void match_and_execute(char *datagram, int len) {
             else {
                 nr_expected = nr + 1;
                 write(1,datagram+header_len,data_len);
-                //przyjmuje dane -> stdout
-               // printf("%s",data); //TODO: odkom
             }
         }
         else if (nr == nr_expected) {
             write(1,datagram+header_len,data_len);
-            //przyjmij dane
-           // printf("%s\n",data);//TODO: odkom
         }
         nr_max_seen = max(nr, nr_max_seen);
 
     }
+    //ACK
     else if (sscanf(datagram, "ACK %d %d", &ack, &win) == 2) {
         if (ack == last_sent + 1) 
             DATAs_since_last_datagram = 0;
+        //odblokowanie czytania z stdin
         if (ack == last_sent+1 && win > 0) {
             if(event_add(stdin_event,NULL) == -1) syserr("event_add");
         }
-
         if (DEBUG) printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
     }
     else 
-        //syserr("Niewlasciwy format datagramu");
-        if (DEBUG) printf("Niewlasciwy format datagramu\n");
+        fprintf(stderr, "WARNING: Niewlasciwy format datagramu\n");
 } 
 
+//konwertuje adres sockaddr_in6 na char *
 char * addr_to_str(struct sockaddr_in6 *addr) {
-    char * str = malloc(sizeof(char) * INET6_ADDRSTRLEN);
+    char str[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
-    //if (DEBUG) printf("adres klienta: %s\n", str);
     return str;
 }  
 
-
-
+//tworzy kontekst dla wydarzen
 void set_base() {
     base = event_base_new();
     if (!base) {
@@ -599,7 +449,7 @@ void set_base() {
     }    
 }
 
-
+//otwiera gniazdo TCP
 evutil_socket_t create_TCP_socket() {
     evutil_socket_t sock;    
     struct addrinfo *addr;
@@ -639,16 +489,6 @@ evutil_socket_t create_TCP_socket() {
 }        
 
 
-
-
-
-
-  
-       
-
-
-
-
 //TODO: do poprawy
 /*
 void main_loop() {
@@ -666,19 +506,15 @@ void main_loop() {
 
 int main (int argc, char *argv[]) {
 
-    if (DEBUG && argc == 1) {
+    if (DEBUG && argc == 1) 
         printf("Client run with parameters: -s [server_name](obligatory) -p [port_num] -X [retransfer_limit]\n");
-    }    
 
-    /* Ctrl-C konczy porogram */
-    if (signal(SIGINT, catch_int) == SIG_ERR) {
+    //wylapanie sygnalu konca (Ctrl+C)
+    if (signal(SIGINT, catch_int) == SIG_ERR) 
         syserr("Unable to change signal handler\n");
-    }
 
     get_parameters(argc, argv);
-    finish = FALSE;
     last_datagram = malloc(DATAGRAM_SIZE);
-
     
     sock_tcp = create_TCP_socket();
     sock_udp = create_UDP_socket(); 
@@ -690,7 +526,6 @@ int main (int argc, char *argv[]) {
     if (DEBUG) printf("Dispatch loop finished.\n");
 
     event_base_free(base);
-
     free(last_datagram); // TODO: do tego nie powinien dojsc, wrzucic to do zwalniania zasobow    
     return 0;
 }

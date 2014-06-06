@@ -7,37 +7,32 @@
 #define HEADER
 
 #include <event2/event.h>
+#include <event2/buffer.h>
 #include <event2/util.h>
 
 #include <errno.h>
 #include <netinet/in.h>
+#include <netdb.h> 
 #include <arpa/inet.h>
-#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h> 
-#include <pthread.h> 
 #include <netinet/tcp.h> //nagle
-
-// snprintf
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
-
 #include <sys/syscall.h>
-
-#include <string.h> /* strcmp */
-
-#include "err.h"
-
 #include <time.h>
 #include <math.h> 
-#include <sys/types.h> 
+#include <signal.h> 
+
+#include "err.h"
+#include "inttypes.h"
 
 #define TRUE 1
 #define FALSE 0
-
 
 #ifndef max
 #define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
