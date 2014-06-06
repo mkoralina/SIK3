@@ -62,7 +62,7 @@
 #define TRUE 1
 #define FALSE 0
 
-#define DEBUG 1
+#define DEBUG 0
 
 int port_num = PORT;
 char server_name[NAME_SIZE];
@@ -423,7 +423,7 @@ void read_CLIENT_datagram() {
     char buf[BUF_SIZE+1];
 
     int r = read(sock_tcp, buf, BUF_SIZE);
-    if(r == -1) syserr("bufferevent_read");
+    if(r == -1) syserr("read client datagram read");
 
     if (sscanf(buf, "CLIENT %d\n", &clientid) == 1) {
         if (DEBUG) {
@@ -618,8 +618,14 @@ evutil_socket_t create_TCP_socket() {
     }
 
     if (connect(sock, addr->ai_addr, addr->ai_addrlen) < 0) {
-        fprintf(stderr, "connect tcp\n");
-        //TODO: reboot
+        fprintf(stderr, "ERROR: connect tcp\n");
+        int jest = 0;
+        while (!jest) {
+            if (connect(sock, addr->ai_addr, addr->ai_addrlen) < 0)
+                fprintf(stderr, "ERROR: connect tcp\n");
+            else
+                jest = 1;
+        }
     }
 
     //zablokowanie Nagle'a
