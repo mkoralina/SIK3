@@ -42,5 +42,12 @@
 #define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
 #endif 
 
+char * addr_to_str(struct sockaddr_in6 *addr) {
+    char * str = malloc(INET6_ADDRSTRLEN);
+    memset(str, 0, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
+    return str;
+}
+
 
 #endif 

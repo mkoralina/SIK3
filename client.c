@@ -6,19 +6,21 @@
 #include "header.h"
 
 #define PORT  14666
-#define BUF_SIZE 10000
+#define BUF_SIZE 8000
 #define RCV_SIZE 64000 
 #define NAME_SIZE 100 //TODO: ile to ma byc?
 #define RETRANSMIT_LIMIT 10 
-#define DATAGRAM_SIZE 10000 
+#define DATAGRAM_SIZE 10000  //TODO: musi byc wiekszy niz BUF_SIZE !
+#define RETRAN_SIZE 40 
+#define MAX_DATAS 20 
 
 #define DEBUG 0
 
 int port_num = PORT;
 char server_name[NAME_SIZE];
 int retransfer_lim = RETRANSMIT_LIMIT;
-evutil_socket_t sock_udp;
-evutil_socket_t sock_tcp;
+evutil_socket_t sock_udp = -1;
+evutil_socket_t sock_tcp = -1;
 struct sockaddr_in6 server_address;
 socklen_t rcva_len = (socklen_t) sizeof(server_address);
 int last_sent = -1; //numer ostatnio wyslanego datagramu DATA
@@ -27,13 +29,33 @@ int win = 0;
 int clientid = -1; //nr = -1 oznacza brak identyfikacji
 int nr_expected = -1;
 int nr_max_seen = -1;
-int connection_lost = 0;
-char * last_datagram;
-int DATAs_since_last_datagram = 0;
+char last_UPLOAD[DATAGRAM_SIZE] = {0};
+int last_UPLOAD_len;
+char last_RETRANSMIT[RETRAN_SIZE] = {0};
+int last_RETRANSMIT_len;
+int UPLOAD_pending = 0;
+int RETRANSMIT_pending = 0;
+int DATAs_since_last_datagram = -1; //licznik rusza po otrzymaniu 1. DATA
+int events_set = 0;
 
 
 struct event_base *base;
 struct event *stdin_event;
+struct event *send_event;
+struct event *keepalive_event;
+struct event *udp_event;
+struct event *tcp_event;
+
+
+//usuwa wszystkie wydarzenia
+void delete_events() {
+    event_del(stdin_event); //TODO: czy w ogole jest aktywne!
+    event_del(send_event); //TODO: to samo tutaj
+    event_del(keepalive_event);
+    event_del(udp_event);
+    event_del(tcp_event);
+    events_set = 0;
+}
 
 struct addrinfo addr_hints = {
     .ai_flags = AI_V4MAPPED,  // ew.  AI_V4MAPPED | AI_ALL  
@@ -80,7 +102,37 @@ void get_parameters(int argc, char *argv[]) {
     }
 }
 
-//czyta muzyke ze standardowego wejscia i przesyla do serwera po UDP
+//wysyla po UDP datagramy z retransmisji
+void send_to_server(evutil_socket_t descriptor, short ev, void *arg) {
+
+    ssize_t snd_len;
+    int flags = 0;
+    
+    if (UPLOAD_pending) {
+        snd_len = send(sock_udp, last_UPLOAD, last_UPLOAD_len, flags);            
+        if (snd_len != last_UPLOAD_len) {  
+            fprintf(stderr, "ERROR: send send_to_server\n");
+            //free(datagram); //TODO
+            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); 
+        }
+        else
+            UPLOAD_pending = 0;
+    }
+    else if (RETRANSMIT_pending) {
+        snd_len = send(sock_udp, last_RETRANSMIT, last_RETRANSMIT_len, flags);
+        if (snd_len != last_RETRANSMIT_len) {  
+            fprintf(stderr, "ERROR: send send_to_server\n");
+            //free(datagram); //TODO
+            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do reboot lbo cos, nie wiem, czy to w ogole reboot ma wlaczac..
+        }
+        else
+            RETRANSMIT_pending = 0;
+    }    
+    //event_del(send_event);
+      
+}
+
+//czyta dane ze standardowego wejscia i przesyla do serwera po UDP
 void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
     char buf[BUF_SIZE+1];
     memset(buf, 0, sizeof(buf));
@@ -90,14 +142,13 @@ void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
         int to_read = min(win, BUF_SIZE); 
         int r = read(0, buf, to_read);
         if(r < 0) {
-            fprintf(stderr, "w evencie: read (from stdin)\n");
-            syserr("DEBUG: blad");
-            //TODO
+            fprintf(stderr, "ERROR read < 0 read_from_stdin\n");
+            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
         }    
         if(r == 0) {
-            fprintf(stderr,"stdin closed. Exiting event loop.\n");
-            syserr("DEBUG: blad");
-            //TODO                
+            fprintf(stderr, "ERROR read = 0 read_from_stdin\n");
+            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+                           
         }
         if (r > 0) {
             last_sent++;
@@ -116,8 +167,14 @@ void set_stdin_event() {
     int stdin = 0;
     stdin_event =
         event_new(base, stdin, EV_READ|EV_PERSIST, read_from_stdin, NULL); 
-    if(!stdin_event) syserr("event_new");
-    if(event_add(stdin_event,NULL) == -1) syserr("event_add"); 
+    if(!stdin_event) {
+        fprintf(stderr, "ERROR: event_new stdin_event\n");
+        reboot();
+    }
+    if(event_add(stdin_event,NULL) == -1) {
+        fprintf(stderr, "ERROR: event_add stdin_event\n");
+        reboot();
+    } 
 }
 
 //czyta po TCP 1. datagram CLIENT oraz raporty, ktore wyswietla na stderr
@@ -131,17 +188,23 @@ void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg)
     char buf[BUF_SIZE+1];
     int r = read(sock_tcp, buf, BUF_SIZE);
     if(r == -1) syserr("fail on read_from_tcp"); //TODO: reboot
-    buf[r] = 0; //znak konca 
-    fprintf(stderr, "%s", buf); 
+    buf[r] = 0;  
+    fprintf(stderr, "%s\n",buf);
     return;
 }
 
-//wydarzenie czytjace z TCP
+//wydarzenie czytajace z TCP
 void set_tcp_event() {
-    struct event *tcp_event =
+    tcp_event =
         event_new(base, sock_tcp, EV_READ|EV_PERSIST, read_from_tcp, NULL); 
-    if(!tcp_event) syserr("event_new");
-    if(event_add(tcp_event,NULL) == -1) syserr("event_add");    
+    if(!tcp_event) {
+        fprintf(stderr, "ERROR: event_new tcp_event\n");
+        reboot();
+    }    
+    if(event_add(tcp_event,NULL) == -1) {
+        fprintf(stderr, "ERROR: event_add tcp_event\n");
+        reboot();
+    }    
 }
 
 //czyta datagramy od serwera przesylane po UDP
@@ -158,10 +221,8 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     len = recv(sock_udp, datagram, RCV_SIZE, flags);
 
     if (len < 0) {
-        //klopotliwe polaczenie z serwerem TODO
-        perror("error on datagram from server socket/ timeout reached");
+        fprintf(stderr, "ERROR: recv < 0 read_from_udp\n");
         if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
-        //reboot(); //TODO
     }    
     else { 
         //matchowanie datagramu do wzorcow i dalsza obsluga   
@@ -171,10 +232,16 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
 
 //wydarzenie czytajace z UDP
 void set_udp_event() {
-    struct event *udp_event =
+    udp_event =
         event_new(base, sock_udp, EV_READ|EV_PERSIST, read_from_udp, NULL); 
-    if(!udp_event) syserr("event_new");
-    if(event_add(udp_event,NULL) == -1) syserr("event_add");    
+    if(!udp_event) {
+        fprintf(stderr, "ERROR: event_new udp_event\n");
+        reboot();
+    }
+    if(event_add(udp_event,NULL) == -1) {
+        fprintf(stderr, "ERROR: event_add udp_event\n");
+        reboot();
+    }    
 }
 
 //przesyla po UDP datagram KEEPALIVE 
@@ -187,10 +254,30 @@ void send_KEEPALIVE_datagram(evutil_socket_t descriptor, short ev, void *arg) {
 //wydarzenie przesylajace co 0,1s datagram KEEPALIVE
 void set_keepalive_event() {
     struct timeval wait_time = { 0, 100000 }; // { s, micro_s}
-    struct event *keepalive_event =
+    keepalive_event =
         event_new(base, sock_udp, EV_PERSIST, send_KEEPALIVE_datagram, NULL); 
-    if(!keepalive_event) syserr("event_new");
-    if(event_add(keepalive_event,&wait_time) == -1) syserr("event_add");  
+    if(!keepalive_event) {
+        fprintf(stderr, "ERROR: event_new keepalive_event\n");
+        reboot();
+    }
+    if(event_add(keepalive_event,&wait_time) == -1) {
+        fprintf(stderr, "ERROR: event_add keepalive_event\n");
+        reboot();
+    }
+}
+
+//wydarzenie przesylajace datagramy UPLOAD i RETRANSMIT gdy warunki zadania spelnione i gniazdo gotowe
+void set_send_event() {
+    send_event =
+        event_new(base, sock_udp, EV_WRITE | EV_PERSIST, send_to_server, NULL); 
+    if(!send_event) {
+        fprintf(stderr, "ERROR: event_new send_event\n");
+        reboot();
+    }
+    if(event_add(send_event,NULL) == -1) {
+        fprintf(stderr, "ERROR: event_add send_event\n");
+        reboot();
+    }
 }
 
 //tworzy wydarzenia w systemie
@@ -198,41 +285,21 @@ void set_events() {
     set_stdin_event();
     set_tcp_event(); // po przeczytaniu datagramu CLIENT nastepuje set_keepalive_event();
     set_udp_event();
-}
-
-//restartuje prace klienta
-void reboot() {
-    //zwalnia zasoby i zamyka zdarzenia
-    //(event_base_loopbreak(base) == -1)
-    event_base_free(base);
-    //TODO
-
-    //czeka 500ms
-    struct timespec tim, tim2;
-    tim.tv_sec = 0;
-    tim.tv_nsec = 500 * 1000000; 
-    nanosleep(&tim, &tim2); 
-    
-    //restartuje klienta
-    // sprawdz czy jest polaczone udp, bo do tego nie musi sie podlaczac jesli tak, jesli nie, to musi
-    //tcp zawsze musi
-    //moze tez jakis main loopp po prostu
-    set_events(); //TODO: o ile blad nie wystapil gdzies wczesniej przy tworzeniu gniazda albo bazy
+    set_send_event(); //wysyla datagramy UPLOAD i RETRANSMIT po UDP
+    events_set = 1;
 }
 
 //wysyla datagram o dlugosci len do serwera po UDP
 void send_datagram(char *datagram, int len) {
-    fprintf(stderr, "datagram: %s\n",datagram );
+    //fprintf(stderr, "datagram: %s\n",datagram );
 
     ssize_t snd_len;
     int flags = 0;
 
-    snd_len = send(sock_udp, datagram, len, flags);
-    fprintf(stderr, "snd_len %d\n",snd_len);                      
+    snd_len = send(sock_udp, datagram, len, flags);                     
     
     if (snd_len != len) {  
-        //TODO: oblusga  
-        perror("partial / failed sendto");
+        fprintf(stderr, "ERROR: send send_datagram\n");
         free(datagram);
         if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do gory
     }        
@@ -268,12 +335,14 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
     sprintf(header, "%s %s\n", type, str);
     memcpy(datagram, header, strlen(header));
     memcpy(datagram + strlen(header), data, data_size);
-
-    send_datagram(datagram, len); 
     
     //kopiuje tresc datagramu do zmiennej trzymajacej ostatnio wyslany datagram
-    memset(last_datagram, 0, len);
-    memcpy(last_datagram, data, len);
+    memset(last_UPLOAD, 0, DATAGRAM_SIZE);
+    memcpy(last_UPLOAD, datagram, len);
+    send_datagram(datagram, len);
+
+    last_UPLOAD_len = len;
+    //UPLOAD_pending = 1;
 
     free(header);
     free(datagram);    
@@ -302,9 +371,9 @@ static void catch_int (int sig) {
     //zwalnia zasoby
 
     //zamyka wydarzenia
-
-    free(last_datagram);
+    delete_events();
     if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+    event_base_free(base);
     exit(EXIT_SUCCESS);
 }
 
@@ -316,7 +385,10 @@ void read_CLIENT_datagram() {
     char buf[BUF_SIZE+1];
 
     int r = read(sock_tcp, buf, BUF_SIZE);
-    if(r == -1) syserr("read client datagram read");
+    if (r < 0) {
+        fprintf(stderr, "ERROR: read < 0 read_CLIENT_datagram\n");
+        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+    }
 
     if (sscanf(buf, "CLIENT %d\n", &clientid) == 1) {
         if (DEBUG) {
@@ -351,20 +423,21 @@ evutil_socket_t create_UDP_socket() {
 
 
     if(getaddrinfo(server_name, str_port, &addr_h, &addr)) {
-        fprintf(stderr, "Error on getaddrinfo udp");
+        fprintf(stderr, "ERROR: getaddrinfo UDP");
+        reboot();
     }
     sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
     if(!sock) {
-        //syserr("socket udp");
-        syserr("Error socket udp\n");
+        fprintf(stderr, "ERROR: socket UDP\n");
+        reboot();
     }
     if(connect(sock, addr->ai_addr, addr->ai_addrlen) < 0) {
-        //syserr("Can not connect to serwer udp");
-        syserr("Can not connect to serwer udp\n");
+        fprintf(stderr, "ERROR: connect UDP\n");
+        reboot();
     }
     if(evutil_make_socket_nonblocking(sock)) {
-        //syserr("error in evutil_make_socket_nonblocking");
-        syserr("Error in evutil_make_socket_nonblocking\n");
+        fprintf(stderr, "ERROR: evutil_make_socket_nonblocking UDP\n");
+        reboot();
     }
 
     server_address.sin6_family = AF_INET6; 
@@ -380,20 +453,20 @@ void match_and_execute(char *datagram, int len) {
     //DATA
     if (sscanf(datagram, "DATA %d %d %d", &nr, &ack, &win) == 3) {
         DATAs_since_last_datagram++;
-        fprintf(stderr, "DATAs = %d\n",DATAs_since_last_datagram );
+        //fprintf(stderr, "DATAs = %d\n",DATAs_since_last_datagram );
         if (ack == last_sent+1 && win > 0) {
-            if(event_add(stdin_event,NULL) == -1) syserr("event_add");
+            if(event_add(stdin_event,NULL) == -1) {
+                fprintf(stderr, "ERROR: event_add stdin_event\n");
+                if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+            }    
         }
-        // TODO: malloc, free, blad na retransmisji
-        /* *** Error in `./client': free(): invalid next size (fast): 0x0000000000cbf0f0 ***
-           *** Error in `./client': malloc(): memory corruption: 0x0000000000cbf110 ***
-        */
-        if (DATAs_since_last_datagram > 1 && last_sent >= 0 && last_sent == ack) {
-            if (DEBUG) printf("RETRANSMISJA KLIENT -> SERWER\n");
-            //send_UPLOAD_datagram(last_datagram, last_sent); //TODO: odkomentowac i dopisac rozmiar do parametrow
+        if (DATAs_since_last_datagram > MAX_DATAS && last_sent >= 0 && last_sent == ack) { //TODO: zmieniona wartosc
+            fprintf(stderr, "RETRANSMISJA KLIENT -> SERWER\n");
+            //UPLOAD_pending = 1;
             DATAs_since_last_datagram = 0;
+            //if(event_add(send_event,NULL) == -1) syserr("event_add"); 
         }
-        fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
+        //fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
         
         char * ptr = memchr(datagram, '\n', len);
         int header_len = ptr - datagram + 1;
@@ -427,18 +500,12 @@ void match_and_execute(char *datagram, int len) {
         if (ack == last_sent+1 && win > 0) {
             if(event_add(stdin_event,NULL) == -1) syserr("event_add");
         }
-        if (DEBUG) printf("Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
+        //fprintf(stderr, "Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
     }
     else 
         fprintf(stderr, "WARNING: Niewlasciwy format datagramu\n");
 } 
 
-//konwertuje adres sockaddr_in6 na char *
-char * addr_to_str(struct sockaddr_in6 *addr) {
-    char str[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, &(addr->sin6_addr), str, INET6_ADDRSTRLEN);
-    return str;
-}  
 
 //tworzy kontekst dla wydarzen
 void set_base() {
@@ -458,51 +525,73 @@ evutil_socket_t create_TCP_socket() {
     char str_port[port_size];
     sprintf(str_port, "%d", port_num);
 
-    if(getaddrinfo(server_name, str_port, &addr_hints, &addr)) syserr("getaddrinfo");
+    if(getaddrinfo(server_name, str_port, &addr_hints, &addr)) {
+        fprintf(stderr, "ERROR: getaddrinfo\n");
+        reboot();
+    } 
 
     sock = socket(addr->ai_family, addr->ai_socktype, 0);
     if (sock < 0) {
-        syserr("socket tcp");
-        fprintf(stderr, "socket tcp\n");
-        //TODO: reboot
+        fprintf(stderr, "ERROR: socket TCP\n");
+        reboot();
     }
 
     if (connect(sock, addr->ai_addr, addr->ai_addrlen) < 0) {
-        fprintf(stderr, "ERROR: connect tcp\n");
-        int jest = 0;
-        while (!jest) {
-            if (connect(sock, addr->ai_addr, addr->ai_addrlen) < 0)
-                fprintf(stderr, "ERROR: connect tcp\n");
-            else
-                jest = 1;
-        }
+        fprintf(stderr, "ERROR: connect TCP\n");
+        reboot();
     }
 
     //zablokowanie Nagle'a
     int flag = 1;
     int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int)); 
     if (result < 0) {
-        fprintf(stderr, "setsockopt tcp\n");
-        //TODO: reboot
+        fprintf(stderr, "ERROR: setsockopt tcp\n");
+        reboot();
     }
     return sock;
 }        
 
+void clear_data() {
+    clientid = -1;
+    last_sent = -1; //numer ostatnio wyslanego datagramu DATA
+    ack = -1;
+    win = 0;
+    nr_expected = -1;
+    nr_max_seen = -1;
+    //last_UPLOAD[DATAGRAM_SIZE] = {0};
+    //last_UPLOAD_len;
 
-//TODO: do poprawy
-/*
-void main_loop() {
-    if (DEBUG) printf("MAIN LOOP\n");
-    finish = FALSE;
+    UPLOAD_pending = 0;
+    DATAs_since_last_datagram = -1;
+}
 
-    last_datagram = malloc(DATAGRAM_SIZE);
-    //sock_udp = create_UDP_socket(); 
-    set_event_TCP_stdin();    
-    create_thread(&event_loop); //przejmie czytanie  z TCP    
-    create_thread(&read_from_stdin); 
-    read_from_UDP();
-    free(last_datagram); // TODO: do tego nie powinien dojsc, wrzucic to do zwalniania zasobow
-}*/
+void reboot() {
+
+    fprintf(stderr, "INFO: Rebooting...\n");
+    clear_data();
+    
+    //if (events_set) delete_events();
+
+    //czeka 500ms
+    struct timespec tim, tim2;
+    tim.tv_sec = 0;
+    tim.tv_nsec = 500 * 1000000; 
+    nanosleep(&tim, &tim2); 
+
+    sock_tcp = create_TCP_socket();
+    if (sock_udp < 0) sock_udp = create_UDP_socket(); 
+    set_base();
+    set_events();   
+
+    if (DEBUG) printf("Entering dispatch loop.\n");
+    if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
+    if (DEBUG) printf("Dispatch loop finished.\n");
+
+    event_base_free(base); 
+    
+    reboot();    
+}
+
 
 int main (int argc, char *argv[]) {
 
@@ -514,7 +603,6 @@ int main (int argc, char *argv[]) {
         syserr("Unable to change signal handler\n");
 
     get_parameters(argc, argv);
-    last_datagram = malloc(DATAGRAM_SIZE);
     
     sock_tcp = create_TCP_socket();
     sock_udp = create_UDP_socket(); 
@@ -525,8 +613,9 @@ int main (int argc, char *argv[]) {
     if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
     if (DEBUG) printf("Dispatch loop finished.\n");
 
-    event_base_free(base);
-    free(last_datagram); // TODO: do tego nie powinien dojsc, wrzucic to do zwalniania zasobow    
+    event_base_free(base); 
+
+    reboot(); 
     return 0;
 }
 
