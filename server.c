@@ -60,6 +60,8 @@ struct info {
     long long nr; //ostatnio odebrany datagram
     long long ack; //oczekiwany od klienta
     long int buf_count; //stopien zapelnienia bufora buf_count = 10, 10 jest w srodku, czyli 0...9, od 10. pisze
+    int sent_sth; //czy klient w ciagu ostatniej s wyslal jakis datagram przez UDP (jesli nie, a wczesniej cos wysylal (=activated) -> porzuc)
+    struct event *control_event;
 };
 
 typedef struct datagram_address {
@@ -136,6 +138,7 @@ void get_parameters(int argc, char *argv[]) {
 void free_a_client(int i) {
     if (clients[i].ev) {
         event_free(clients[i].ev);
+        event_free(client_info[i].control_event);
         memset(buf_FIFO[i],0,fifo_queue_size);
         activated[i] = 0;
     }
@@ -433,7 +436,7 @@ void init_client_info() {
 }
 
 //czysci tablice z informacjami o kliencie
-clear_client_info(int i){
+void clear_client_info(int i){
     client_info[i].min_FIFO = 0;
     client_info[i].max_FIFO = 0;
     client_info[i].buf_count = 0;
@@ -513,6 +516,29 @@ void update_min_max(int i, long long int size) {
         client_info[i].buf_state = FILLING;
 }
 
+//sprawdza, czy w ciagu ostatniej sekundy klient wyslal datagram
+void check_if_sent(evutil_socket_t descriptor, short ev, void *arg) {
+
+    int id = (int ) arg;
+    if (client_info[id].sent_sth) {
+        client_info[id].sent_sth = 0;
+    }
+    else {
+        //TODO: porzuc klienta
+        fprintf(stderr, "KLIENT %d NIEAKTYWNY -> PORZUC\n",id);
+    }
+    //printf("ID: %d\n",id);
+}
+
+//wydarzenia kontrolujace stan polaczenia z UDP - porzuca klienta, gdy ten nie 
+//przesle niczego przez 1 s
+void set_control_event(int id){
+    client_info[id].control_event = event_new(base, sock_udp, EV_PERSIST, check_if_sent, (void*) id);
+    if(!client_info[id].control_event) syserr("event_new");
+    struct timeval wait_time = { 1, 0 };
+    if (event_add(client_info[id].control_event,&wait_time) == -1) syserr("event_add client_info[id].control_event");
+}
+
 //uzupelnia strukture client_info dla nowego klienta, od ktorego otrzymano
 //1. datagram po UDP (zgodnie z protokolem: datagram CLIENT)
 void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short sin_port) {
@@ -524,11 +550,11 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         client_info[id].port_UDP = sin_port;
         client_info[id].addr_UDP = sin_addr;
         if (DEBUG) printf("Zmatchowano do CLIENT, client_info[id].port_UDP = %d\n", client_info[id].port_UDP);
-
+        client_info[id].sent_sth = 1;
         client_info[id].ack = 0;
         client_info[id].nr = -1;
         activated[id] = 1;
-
+        set_control_event(id);
     }
     else 
         syserr("Bledny datagram poczatkowy\n");
@@ -678,6 +704,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
             //stary klient, obsluz jego datagram
             int nr;    
             char data[BUF_SIZE+1] = { 0 };
+            client_info[clientid].sent_sth = 1;
 
             //KEEPALIVE
             if (strcmp(datagram, "KEEPALIVE\n") == 0)                 
@@ -687,7 +714,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
                 process_UPLOAD(datagram, nr, clientid, len);            
             //RETRANSMIT
             else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) 
-                process_RETRANSMIT(nr, clientid);            
+                process_RETRANSMIT(nr, clientid);                          
             //BLAD
             else 
                 fprintf(stderr, "WARNING: Niewlasciwy format datagramu\n");                         

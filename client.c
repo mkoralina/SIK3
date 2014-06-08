@@ -49,11 +49,11 @@ struct event *tcp_event;
 
 //usuwa wszystkie wydarzenia
 void delete_events() {
-    event_del(stdin_event); //TODO: czy w ogole jest aktywne!
-    event_del(send_event); //TODO: to samo tutaj
-    event_del(keepalive_event);
-    event_del(udp_event);
-    event_del(tcp_event);
+    event_free(stdin_event); //TODO: czy w ogole jest aktywne!
+    event_free(send_event); //TODO: to samo tutaj
+    event_free(keepalive_event);
+    event_free(udp_event);
+    event_free(tcp_event);
     events_set = 0;
 }
 
@@ -431,6 +431,16 @@ evutil_socket_t create_UDP_socket() {
         fprintf(stderr, "ERROR: socket UDP\n");
         reboot();
     }
+
+    struct timeval tv;
+    tv.tv_sec = 1; //TODO: zmien na 1s
+    tv.tv_usec = 0;
+
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
+        fprintf(stderr, "ERROR: brak datagramu przez 1 s\n");
+        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+    }
+
     if(connect(sock, addr->ai_addr, addr->ai_addrlen) < 0) {
         fprintf(stderr, "ERROR: connect UDP\n");
         reboot();
@@ -462,7 +472,7 @@ void match_and_execute(char *datagram, int len) {
         }
         if (DATAs_since_last_datagram > MAX_DATAS && last_sent >= 0 && last_sent == ack) { //TODO: zmieniona wartosc
             fprintf(stderr, "RETRANSMISJA KLIENT -> SERWER\n");
-            //UPLOAD_pending = 1;
+            UPLOAD_pending = 1;
             DATAs_since_last_datagram = 0;
             //if(event_add(send_event,NULL) == -1) syserr("event_add"); 
         }
