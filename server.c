@@ -618,10 +618,9 @@ void process_UPLOAD(char * datagram, int nr, int clientid, int len) {
     } 
 }
 
-//przetwarza datagram KEEPALIVE od klietna clientid
+//(DEBUG) przetwarza datagram KEEPALIVE od klietna clientid
 void process_KEEPALIVE(int clientid) {
-    if (DEBUG) printf("Zmatchowano do keepalive\n");
-    //TODO: uaktulanij czas dla tego uzytkownika ??
+    if (DEBUG) printf("Zmatchowano do keepalive, klient: %d\n",clientid);
 }
 
 //przetwarza datagram RETRANSMIT od klienta clientid i parametrze nr 
@@ -762,7 +761,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     for(i = 0; i < MAX_CLIENTS; i++) {
         //przesyla dane do wszystkich klientow w systemie
         size = min(output_size, client_info[i].buf_count);
-        if(activated[i]) { //TODO: zmienic na clients[i].ev?             
+        if(activated[i]) {             
             if (DEBUG) {
                 fprintf(stderr, "size = %d\n",size);
                 fprintf(stderr, "output_size = %d\n",output_size);

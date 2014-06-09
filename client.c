@@ -37,6 +37,7 @@ int UPLOAD_pending = 0;
 int RETRANSMIT_pending = 0;
 int DATAs_since_last_datagram = -1; //licznik rusza po otrzymaniu 1. DATA
 int events_set = 0;
+int eof = 0;
 
 
 struct event_base *base;
@@ -46,13 +47,22 @@ struct event *keepalive_event;
 struct event *udp_event;
 struct event *tcp_event;
 
-
+//TODO: ify -> bledy
 //usuwa wszystkie wydarzenia
-void delete_events() {
+void free_events() {
+    event_del(stdin_event); //TODO: czy w ogole jest aktywne!
     event_free(stdin_event); //TODO: czy w ogole jest aktywne!
+    
+    event_del(send_event); //TODO: to samo tutaj
     event_free(send_event); //TODO: to samo tutaj
+    
+    event_del(keepalive_event);
     event_free(keepalive_event);
+
+    event_del(udp_event);
     event_free(udp_event);
+
+    event_del(tcp_event);
     event_free(tcp_event);
     events_set = 0;
 }
@@ -102,6 +112,16 @@ void get_parameters(int argc, char *argv[]) {
     }
 }
 
+//TODO
+//obsluguje Ctrl+C
+static void catch_int (int sig) {
+    fprintf(stderr, "INFO: Closing...\n");
+    if (events_set) free_events();
+    if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+    event_base_free(base);
+    exit(EXIT_SUCCESS);
+}
+
 //wysyla po UDP datagramy z retransmisji
 void send_to_server(evutil_socket_t descriptor, short ev, void *arg) {
 
@@ -112,24 +132,23 @@ void send_to_server(evutil_socket_t descriptor, short ev, void *arg) {
         snd_len = send(sock_udp, last_UPLOAD, last_UPLOAD_len, flags);            
         if (snd_len != last_UPLOAD_len) {  
             fprintf(stderr, "ERROR: send send_to_server\n");
-            //free(datagram); //TODO
-            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); 
+            if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); 
         }
         else
             UPLOAD_pending = 0;
     }
+    /* (gdyby calosc przesylu po UDP szla tym eventem)
     else if (RETRANSMIT_pending) {
         snd_len = send(sock_udp, last_RETRANSMIT, last_RETRANSMIT_len, flags);
         if (snd_len != last_RETRANSMIT_len) {  
             fprintf(stderr, "ERROR: send send_to_server\n");
-            //free(datagram); //TODO
             if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do reboot lbo cos, nie wiem, czy to w ogole reboot ma wlaczac..
         }
         else
             RETRANSMIT_pending = 0;
     }    
     //event_del(send_event);
-      
+    */  
 }
 
 //czyta dane ze standardowego wejscia i przesyla do serwera po UDP
@@ -142,13 +161,12 @@ void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
         int to_read = min(win, BUF_SIZE); 
         int r = read(0, buf, to_read);
         if(r < 0) {
-            fprintf(stderr, "ERROR read < 0 read_from_stdin\n");
-            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+            fprintf(stderr, "ERROR: read < 0 read_from_stdin\n");
+            if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
         }    
-        if(r == 0) {
-            fprintf(stderr, "ERROR read = 0 read_from_stdin\n");
-            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
-                           
+        if(r == 0) {            
+            fprintf(stderr, "INFO: read stdin reached EOF\n");
+            catch_int(SIGINT);                           
         }
         if (r > 0) {
             last_sent++;
@@ -187,9 +205,14 @@ void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg)
 
     char buf[BUF_SIZE+1];
     int r = read(sock_tcp, buf, BUF_SIZE);
-    if(r == -1) syserr("fail on read_from_tcp"); //TODO: reboot
-    buf[r] = 0;  
-    fprintf(stderr, "%s\n",buf);
+    if(r == -1) {
+        fprintf(stderr, "ERROR: read<0 read_from_tcp\n");
+        reboot();
+    }
+    else {    
+        buf[r] = 0;  
+        fprintf(stderr, "%s\n",buf);
+    }    
     return;
 }
 
@@ -222,7 +245,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
 
     if (len < 0) {
         fprintf(stderr, "ERROR: recv < 0 read_from_udp\n");
-        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
     }    
     else { 
         //matchowanie datagramu do wzorcow i dalsza obsluga   
@@ -266,7 +289,7 @@ void set_keepalive_event() {
     }
 }
 
-//wydarzenie przesylajace datagramy UPLOAD i RETRANSMIT gdy warunki zadania spelnione i gniazdo gotowe
+//wydarzenie przesylajace datagramy UPLOAD z retransmisji
 void set_send_event() {
     send_event =
         event_new(base, sock_udp, EV_WRITE | EV_PERSIST, send_to_server, NULL); 
@@ -301,7 +324,7 @@ void send_datagram(char *datagram, int len) {
     if (snd_len != len) {  
         fprintf(stderr, "ERROR: send send_datagram\n");
         free(datagram);
-        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do gory
+        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do gory
     }        
 }
 
@@ -342,7 +365,7 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
     send_datagram(datagram, len);
 
     last_UPLOAD_len = len;
-    //UPLOAD_pending = 1;
+    //UPLOAD_pending = 1; //gdyby calosc przesylu po UDP szla eventen send_to_server
 
     free(header);
     free(datagram);    
@@ -365,17 +388,7 @@ void send_RETRANSMIT_datagram(int no) {
     free(datagram);
 }
 
-//TODO
-//obsluguje Ctrl+C
-static void catch_int (int sig) {
-    //zwalnia zasoby
 
-    //zamyka wydarzenia
-    //delete_events();
-    //if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
-    //event_base_free(base);
-    exit(EXIT_SUCCESS);
-}
 
 //potwierdza nawiazanie polaczenia TCP z serwerem i odbiera numer identyfikacyjny
 void read_CLIENT_datagram() {
@@ -387,7 +400,7 @@ void read_CLIENT_datagram() {
     int r = read(sock_tcp, buf, BUF_SIZE);
     if (r < 0) {
         fprintf(stderr, "ERROR: read < 0 read_CLIENT_datagram\n");
-        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
     }
 
     if (sscanf(buf, "CLIENT %d\n", &clientid) == 1) {
@@ -438,7 +451,8 @@ evutil_socket_t create_UDP_socket() {
 
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
         fprintf(stderr, "ERROR: brak datagramu przez 1 s\n");
-        if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+        reboot();
     }
 
     if(connect(sock, addr->ai_addr, addr->ai_addrlen) < 0) {
@@ -463,11 +477,11 @@ void match_and_execute(char *datagram, int len) {
     //DATA
     if (sscanf(datagram, "DATA %d %d %d", &nr, &ack, &win) == 3) {
         DATAs_since_last_datagram++;
-        //fprintf(stderr, "DATAs = %d\n",DATAs_since_last_datagram );
+
         if (ack == last_sent+1 && win > 0) {
             if(event_add(stdin_event,NULL) == -1) {
                 fprintf(stderr, "ERROR: event_add stdin_event\n");
-                if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+                if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
             }    
         }
         if (DATAs_since_last_datagram > MAX_DATAS && last_sent >= 0 && last_sent == ack) { //TODO: zmieniona wartosc
@@ -508,7 +522,7 @@ void match_and_execute(char *datagram, int len) {
             DATAs_since_last_datagram = 0;
         //odblokowanie czytania z stdin
         if (ack == last_sent+1 && win > 0) {
-            if(event_add(stdin_event,NULL) == -1) syserr("event_add");
+            if (event_add(stdin_event,NULL) == -1) syserr("event_add");
         }
         //fprintf(stderr, "Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
     }
@@ -580,7 +594,7 @@ void reboot() {
     fprintf(stderr, "INFO: Rebooting...\n");
     clear_data();
     
-    //if (events_set) delete_events();
+    if (events_set) free_events();
 
     //czeka 500ms
     struct timespec tim, tim2;
@@ -594,7 +608,7 @@ void reboot() {
     set_events();   
 
     if (DEBUG) printf("Entering dispatch loop.\n");
-    if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
+    if (event_base_dispatch(base) == -1) syserr("event_base_dispatch");
     if (DEBUG) printf("Dispatch loop finished.\n");
 
     event_base_free(base); 
@@ -620,7 +634,7 @@ int main (int argc, char *argv[]) {
     set_events();
 
     if (DEBUG) printf("Entering dispatch loop.\n");
-    if(event_base_dispatch(base) == -1) syserr("event_base_dispatch");
+    if (event_base_dispatch(base) == -1) syserr("event_base_dispatch");
     if (DEBUG) printf("Dispatch loop finished.\n");
 
     event_base_free(base); 
