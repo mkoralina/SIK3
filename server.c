@@ -23,7 +23,6 @@
 #define DEBUG 0 
 
 
-//TODO: popraw typy jeszcze
 int port_num = PORT;
 long int fifo_queue_size = FIFO_SIZE; 
 long int fifo_low = FIFO_LOW_WATERMARK;
@@ -76,8 +75,6 @@ long int server_count = 0; //ktory datagram jest ostatni w server_FIFO
 int activated[MAX_CLIENTS]; //czy klient podlaczyl sie juz przez TCP
 
 
-
-//TODO: sprawdzenie poprawnosci podanych parametrow
 //wczytanie parametrow
 void get_parameters(int argc, char *argv[]) {
 	int fifo_high_set = 0;
@@ -399,7 +396,7 @@ void new_client_tcp(evutil_socket_t sock, short ev, void *arg) {
     struct connection_description *cl = get_client_slot();
     if(!cl) {
         close(connection_socket);
-        fprintf(stderr, "get_client_slot, too many clients"); // ew. TODO: wypisuj 
+        fprintf(stderr, "get_client_slot, too many clients");  
     }
   
     //kopiuje adres klienta do struktury
@@ -479,21 +476,21 @@ evutil_socket_t create_UDP_socket() {
     return sock;
 }
 
+//TODO
+int same_address(struct in6_addr sin_addr1, struct in6_addr sin_addr2) {
+    if (memcmp((void *) &sin_addr1, (void *) &sin_addr2, sizeof(struct in6_addr)) == 0)
+        return 1;
+    return 0;
+}
+
 //identyfikuje klienta na podstawie adresu i portu
 int get_clientid(struct in6_addr sin_addr, unsigned short sin_port) {
     if (DEBUG) printf("get_clientid\n");
     int id = -1;
     int i;
     for(i = 0; i < MAX_CLIENTS; i++) {
-        // TODO:
-        /*if (id < 0 && client_info[i].addr_UDP == sin_addr && client_info[i].port_UDP == sin_port) { 
-        // TUTAJ SIE NIE KOMPILUJE - INACZEJ TRZEBA POROWNAC TE ADRESY:
-            client_info[i].addr_UDP == sin_addr
-           pomysl: zapisac do info adres jednak i wtedy
-           http://stackoverflow.com/questions/22183561/how-to-compare-two-ip-address-in-c
-        */ 
-        //atrapa, zeby sie skompilowalo:
-        if (id < 0 && client_info[i].port_UDP == sin_port) {   // <- TEMPORARY!!!!! TODO
+        if (id < 0 && client_info[i].port_UDP == sin_port 
+          && same_address(client_info[i].addr_UDP, sin_addr)) {  
             if (DEBUG) printf("znaleziono, klient pod nr: %d\n",i);
             id = i;
         }        
@@ -535,7 +532,7 @@ void check_if_sent(evutil_socket_t descriptor, short ev, void *arg) {
 //przesle niczego przez 1 s
 void set_control_event(){
     control_event = event_new(base, sock_udp, EV_PERSIST, check_if_sent, NULL);
-    if(!control_event) syserr("event_new control_event"); //TODO err
+    if(!control_event) syserr("event_new control_event");
     struct timeval wait_time = { 1, 0 };
     if (event_add(control_event,&wait_time) == -1) syserr("event_add control_event");
 }

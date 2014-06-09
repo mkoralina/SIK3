@@ -107,7 +107,6 @@ struct addrinfo addr_hints = {
     .ai_next = NULL
 };
 
-//TODO: obsluga blednego formatu wejscia
 //wczytuje wartosci parametrow z wejscia
 void get_parameters(int argc, char *argv[]) {    
     int server_name_set = 0;
