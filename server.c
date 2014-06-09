@@ -20,7 +20,7 @@
 #define ACTIVE 0
 #define FILLING 1 
 
-#define DEBUG 1 
+#define DEBUG 0 
 
 
 //TODO: popraw typy jeszcze
@@ -40,7 +40,7 @@ struct event *mix_send_event;
 struct event *read_event;
 struct event *client_event;
 struct event *write_event;
-
+struct event *control_event;
 
 struct connection_description {
     int id; 
@@ -137,8 +137,9 @@ void get_parameters(int argc, char *argv[]) {
 //uwolnienie gniazda, czyszczenie bufora i deaktywacja
 void free_a_client(int i) {
     if (clients[i].ev) {
+        //TODO: ju to wczesniej robie w jednej fuynkcji, w drugiej nie + bledy
+        event_del(clients[i].ev);
         event_free(clients[i].ev);
-        event_free(client_info[i].control_event);
         memset(buf_FIFO[i],0,fifo_queue_size);
         activated[i] = 0;
     }
@@ -161,11 +162,19 @@ void free_buf_FIFOs() {
 }
 
 //usuwa wszystkie wydarzenia
-void delete_events() {
+void free_events() {
+    //TODO: bledy
     event_del(report_event);
+    event_free(report_event);
+    
     event_del(mix_send_event);
+    event_free(mix_send_event);
+    
     event_del(read_event);
+    event_free(read_event);
+    
     event_del(client_event);
+    event_free(client_event);
 }
 
 //obsluguje Ctrl+C
@@ -174,7 +183,7 @@ static void catch_int (int sig) {
     free_clients();
     free(server_FIFO);  
     free_buf_FIFOs();
-    delete_events();
+    free_events();
     event_base_free(base); 
   	exit(EXIT_SUCCESS);
 }
@@ -518,25 +527,29 @@ void update_min_max(int i, long long int size) {
 
 //sprawdza, czy w ciagu ostatniej sekundy klient wyslal datagram
 void check_if_sent(evutil_socket_t descriptor, short ev, void *arg) {
-
-    int id = (int ) arg;
-    if (client_info[id].sent_sth) {
-        client_info[id].sent_sth = 0;
+    int i;
+    for (i = 0; i < MAX_CLIENTS; i++) {
+        if (activated[i]) {
+            if (client_info[i].sent_sth) {
+                client_info[i].sent_sth = 0;
+            }
+            else {
+                //TODO: porzuc klienta
+                free_a_client(i);
+                clear_client_info(i);
+                fprintf(stderr, "KLIENT %d NIEAKTYWNY -> PORZUC\n",i);
+            }    
+        }
     }
-    else {
-        //TODO: porzuc klienta
-        fprintf(stderr, "KLIENT %d NIEAKTYWNY -> PORZUC\n",id);
-    }
-    //printf("ID: %d\n",id);
 }
 
 //wydarzenia kontrolujace stan polaczenia z UDP - porzuca klienta, gdy ten nie 
 //przesle niczego przez 1 s
-void set_control_event(int id){
-    client_info[id].control_event = event_new(base, sock_udp, EV_PERSIST, check_if_sent, (void*) id);
-    if(!client_info[id].control_event) syserr("event_new");
+void set_control_event(){
+    control_event = event_new(base, NULL, EV_PERSIST, check_if_sent, NULL);
+    if(!control_event) syserr("event_new control_event"); //TODO err
     struct timeval wait_time = { 1, 0 };
-    if (event_add(client_info[id].control_event,&wait_time) == -1) syserr("event_add client_info[id].control_event");
+    if (event_add(control_event,&wait_time) == -1) syserr("event_add control_event");
 }
 
 //uzupelnia strukture client_info dla nowego klienta, od ktorego otrzymano
@@ -554,7 +567,7 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         client_info[id].ack = 0;
         client_info[id].nr = -1;
         activated[id] = 1;
-        set_control_event(id);
+        //set_control_event(id);
     }
     else 
         syserr("Bledny datagram poczatkowy\n");
@@ -562,7 +575,7 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
 
 //przetwarza datagram UPLOAD o numerze nr i dlugosci len od uzytkownika clientid
 void process_UPLOAD(char * datagram, int nr, int clientid, int len) {
-    fprintf(stderr, "Zmatchowano do UPLOAD, nr = %d\n",nr);
+    //fprintf(stderr, "Zmatchowano do UPLOAD, nr = %d\n",nr);
 
     if (nr == client_info[clientid].ack) {
 
@@ -575,8 +588,8 @@ void process_UPLOAD(char * datagram, int nr, int clientid, int len) {
         //TODO: if data_len > BUF_SIZE -> zapisuje od poczatku koniec danychw cakym buforze + komunikat
 
         if (client_info[clientid].buf_count == fifo_queue_size) {
-            fprintf(stderr, "client_info[clientid].buf_count %d\n",client_info[clientid].buf_count);
-            fprintf(stderr, "size, ktory przewazyl: %d\n",data_len );
+            //fprintf(stderr, "client_info[clientid].buf_count %d\n",client_info[clientid].buf_count);
+            //fprintf(stderr, "size, ktory przewazyl: %d\n",data_len );
             syserr("przepelnienie bufora");
         } 
         
@@ -584,7 +597,7 @@ void process_UPLOAD(char * datagram, int nr, int clientid, int len) {
         client_info[clientid].buf_count += data_len;
 
         if (client_info[clientid].buf_count > BUF_SIZE) syserr("przepelnienie bufora klienta");
-        fprintf(stderr, "client_info[clientid].buf_count = %d\n",client_info[clientid].buf_count);
+        //fprintf(stderr, "client_info[clientid].buf_count = %d\n",client_info[clientid].buf_count);
 
         update_min_max(clientid, client_info[clientid].buf_count);
 
@@ -745,9 +758,10 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 
     num_clients = 0;
     int anyone_in = 0;
+    int size;
     for(i = 0; i < MAX_CLIENTS; i++) {
         //przesyla dane do wszystkich klientow w systemie
-        int size = min(output_size, client_info[i].buf_count);
+        size = min(output_size, client_info[i].buf_count);
         if(activated[i]) { //TODO: zmienic na clients[i].ev?             
             if (DEBUG) {
                 fprintf(stderr, "size = %d\n",size);
@@ -756,6 +770,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
             send_DATA_datagram(output_buf, last_nr, client_info[i].ack, fifo_queue_size - client_info[i].buf_count, i, size); //TODO to nie powinno byc ile, ale output_size, ale wtedy nie dziala
             anyone_in = 1;
         }
+
 
         //uaktualnia bufory klientow z aktywna kolejka
         if (activated[i] && client_info[i].buf_state == ACTIVE) {   
@@ -766,11 +781,14 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         }
     }
 
+
+
     //jesli wyslal komukolwiek, zwieksza licznik, zapisuje dane
     if (anyone_in) {
         last_nr++;
         int position = (last_nr % BUF_LEN) * 176 * interval;
-        memcpy(&server_FIFO[position],output_buf,output_size);
+        memcpy(&server_FIFO[position],output_buf,size);
+
     }     
 
 } 
@@ -865,6 +883,7 @@ void set_events() {
     set_read_event(); //czyta z udp
     set_mix_send_event(); //miskuje i przesyla po udp 
     set_report_event(); //przesyla raporty po tcp
+    set_control_event();
 }
 
 

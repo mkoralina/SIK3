@@ -371,9 +371,9 @@ static void catch_int (int sig) {
     //zwalnia zasoby
 
     //zamyka wydarzenia
-    delete_events();
-    if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
-    event_base_free(base);
+    //delete_events();
+    //if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+    //event_base_free(base);
     exit(EXIT_SUCCESS);
 }
 
