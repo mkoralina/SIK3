@@ -25,10 +25,10 @@
 
 //TODO: popraw typy jeszcze
 int port_num = PORT;
-int fifo_queue_size = FIFO_SIZE; 
-int fifo_low = FIFO_LOW_WATERMARK;
-int fifo_high;
-int buf_length = BUF_LEN;
+long int fifo_queue_size = FIFO_SIZE; 
+long int fifo_low = FIFO_LOW_WATERMARK;
+long int fifo_high;
+long int buf_length = BUF_LEN;
 unsigned long interval = TX_INTERVAL;
 unsigned long long last_nr = 0; //ostatnio nadany datagram po zmiksowaniu - TO TRZEBA MIEC, ZEBY IDENTYFIKOWAC WLASNE NADAWANE WIADOMOSCI
 
@@ -54,23 +54,15 @@ struct info {
     unsigned short port_TCP;
     unsigned short port_UDP;
     struct in6_addr addr_UDP;
-    unsigned long  min_FIFO;
-    unsigned long max_FIFO;
+    long int  min_FIFO;
+    long int max_FIFO;
     int buf_state;
-    long long nr; //ostatnio odebrany datagram
-    long long ack; //oczekiwany od klienta
+    long int nr; //ostatnio odebrany datagram
+    long int ack; //oczekiwany od klienta
     long int buf_count; //stopien zapelnienia bufora buf_count = 10, 10 jest w srodku, czyli 0...9, od 10. pisze
     int sent_sth; //czy klient w ciagu ostatniej s wyslal jakis datagram przez UDP (jesli nie, a wczesniej cos wysylal (=activated) -> porzuc)
     struct event *control_event;
 };
-
-typedef struct datagram_address {
-    char * datagram;
-    struct in6_addr sin_addr;
-    unsigned short sin_port;
-    int len;
-} datagram_address;
-
 
 struct info client_info[MAX_CLIENTS]; //indeks w tabeli jest numerem id klienta
 
@@ -79,7 +71,7 @@ struct connection_description clients[MAX_CLIENTS];
 char * buf_FIFO[MAX_CLIENTS];
 
 char * server_FIFO;
-int server_count = 0; //ktory datagram jest ostatni w server_FIFO
+long int server_count = 0; //ktory datagram jest ostatni w server_FIFO
 
 int activated[MAX_CLIENTS]; //czy klient podlaczyl sie juz przez TCP
 
@@ -127,17 +119,16 @@ void get_parameters(int argc, char *argv[]) {
 
     if (DEBUG) {	    	
 	    printf("port_num: %d\n", port_num);
-	    printf("fifo_queue_size: %d\n", fifo_queue_size);
-	    printf("fifo_low: %d\n", fifo_low);
-	    printf("fifo_high: %d\n", fifo_high);
-	    printf("buf_length: %d\n", buf_length);	
+	    printf("fifo_queue_size: %li\n", fifo_queue_size);
+	    printf("fifo_low: %li\n", fifo_low);
+	    printf("fifo_high: %li\n", fifo_high);
+	    printf("buf_length: %li\n", buf_length);	
     }	
 }
 
 //uwolnienie gniazda, czyszczenie bufora i deaktywacja
 void free_a_client(int i) {
     if (clients[i].ev) {
-        //TODO: ju to wczesniej robie w jednej fuynkcji, w drugiej nie + bledy
         if (event_del(clients[i].ev) == -1) syserr("Can't delete client[i].ev");
         event_free(clients[i].ev);
         memset(buf_FIFO[i],0,fifo_queue_size);
@@ -163,7 +154,6 @@ void free_buf_FIFOs() {
 
 //usuwa wszystkie wydarzenia
 void free_events() {
-    //TODO: bledy
     if (event_del(report_event) == -1) syserr("Can't delete report_event");
     event_free(report_event);
     
@@ -177,9 +167,18 @@ void free_events() {
     event_free(client_event);
 }
 
+//czysci tablice z informacjami o kliencie
+void clear_client_info(int i){
+    client_info[i].min_FIFO = 0;
+    client_info[i].max_FIFO = 0;
+    client_info[i].buf_count = 0;
+    if (fifo_high > 0)
+        client_info[i].buf_state = FILLING;         
+    else client_info[i].buf_state = ACTIVE;     
+}
+
 //obsluguje Ctrl+C
-static void catch_int (int sig) {
-    int i;    
+static void catch_int (int sig) {    
     free_clients();
     free(server_FIFO);  
     free_buf_FIFOs();
@@ -209,7 +208,6 @@ struct connection_description *get_client_slot(void)
     return NULL;
 }
 
-//TODO: cos tu dorobic moze jeszcze (te timeouty czy cos moze)
 //kontroluje polaczenie TCP z klientem
 void client_socket_cb(evutil_socket_t sock, short ev, void *arg)
 {
@@ -251,7 +249,7 @@ void send_datagram(char *datagram, int clientid, int len) {
             (struct sockaddr *) &client_address, sizeof(client_address));    
     
     if (snd_len != len) {
-        syserr("partial / failed sendto"); //TODO: syserr
+        fprintf(stderr, "ERROR: send send_datagram\n");
     }      
 }
 
@@ -272,37 +270,37 @@ void send_CLIENT_datagram(evutil_socket_t sock, uint32_t id) {
 	sprintf(datagram, "%s %s\n", data, clientid);
 
   	if ((w = write(sock, datagram, strlen(datagram))) == 0) {
-  		syserr("write nieudany clientid\n");
+  		fprintf(stderr, "ERROR: write send_CLIENT_datagram\n");
   	}	
 
-  	if (w != strlen(datagram)) syserr("nie przeszlo\n"); 
+  	if (w != strlen(datagram)) fprintf(stderr, "ERROR: write send_CLIENT_datagram\n"); 
     free(datagram);
 }
 
 //wysyla datagram typu DATA o numerze no, danych data o dlugosci data_len do klienta
 //o numerze id = clientid, od ktorego oczekuje sie datagramu nr ack wielkosci <= win 
-void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int data_len) {
+void send_DATA_datagram(char *data, long int no, long int ack, long int win, int clientid, int data_len) {
     if (DEBUG) printf("send_DATA_datagram\n");
-    int num = no;
+    long int num = no;
     if (!no) num = 1; //na wypadek gdyby log(0)
     int str_no_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_no[str_no_size];
-    sprintf(str_no, "%d", no);
+    sprintf(str_no, "%li", no);
 
     num = ack;
     if (!ack) num = 1; 
     int str_ack_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_ack[str_ack_size];
-    sprintf(str_ack, "%d", ack);
+    sprintf(str_ack, "%li", ack);
 
     num = win;
     if (!win) num = 1; 
     int str_win_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_win[str_win_size];
-    sprintf(str_win, "%d", win);
+    sprintf(str_win, "%li", win);
 
     char* type= "DATA";
     char * datagram = malloc(strlen(type) + strlen(str_no) + strlen(str_ack) + strlen(str_win) + 4 + data_len);    
@@ -319,20 +317,20 @@ void send_DATA_datagram(char *data, int no, int ack, int win, int clientid, int 
 }
 
 //wysyla datagram typu ACK potwierdzajacy odbior datagramu ack-1
-void send_ACK_datagram(int ack, int win, int clientid) {
-    int num = ack;
+void send_ACK_datagram(long int ack, long int win, int clientid) {
+    long int num = ack;
     if (!ack) num = 1; 
     int str_ack_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_ack[str_ack_size];
-    sprintf(str_ack, "%d", ack);
+    sprintf(str_ack, "%li", ack);
 
     num = win;
     if (!win) num = 1; 
     int str_win_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str_win[str_win_size];
-    sprintf(str_win, "%d", win);
+    sprintf(str_win, "%li", win);
 
     char* type= "ACK";
     char* datagram = malloc(strlen(type) + strlen(str_ack) + strlen(str_win) + 4);
@@ -354,7 +352,7 @@ void send_a_report(evutil_socket_t descriptor, short ev, void *arg) {
             int offset = strlen(report);
             int report_line = 200;
             char tmp[report_line];
-            sprintf(tmp, "[%s:%d] FIFO: %zu/%d (min. %lu, max. %lu)\n",
+            sprintf(tmp, "[%s:%d] FIFO: %zu/%li (min. %li, max. %li)\n",
                      clients[i].str_address, 
                      ntohs(clients[i].address.sin6_port),
                      client_info[i].buf_count, 
@@ -372,7 +370,7 @@ void send_a_report(evutil_socket_t descriptor, short ev, void *arg) {
             int w;
             fprintf(stderr, "WYSYLAM RAPORT: %s\n",report);
             if ((w = write(clients[i].sock, report, strlen(report))) == 0) {
-                syserr("write: send a report\n");
+                fprintf(stderr, "ERROR: write send_a_report\n");
             }        
         }    
     }   
@@ -444,16 +442,6 @@ void init_client_info() {
   	}
 }
 
-//czysci tablice z informacjami o kliencie
-void clear_client_info(int i){
-    client_info[i].min_FIFO = 0;
-    client_info[i].max_FIFO = 0;
-    client_info[i].buf_count = 0;
-    if (fifo_high > 0)
-        client_info[i].buf_state = FILLING;         
-    else client_info[i].buf_state = ACTIVE;     
-}
-
 //tworzy gniazdo UDP
 evutil_socket_t create_UDP_socket() {
 	struct sockaddr_in6 server;
@@ -467,7 +455,7 @@ evutil_socket_t create_UDP_socket() {
         syserr("setsockopt(SO_REUSEADDR)");
 
     struct timeval tv;
-    tv.tv_sec = 20; //TODO: zmien na 1s i to dl akazdego kleinta
+    tv.tv_sec = 1; 
     tv.tv_usec = 0;
 
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
@@ -514,7 +502,7 @@ int get_clientid(struct in6_addr sin_addr, unsigned short sin_port) {
 }
 
 //update'uje statystyki klienta
-void update_min_max(int i, long long int size) {
+void update_min_max(int i, long int size) {
     //update min i max
     client_info[i].min_FIFO = min(client_info[i].min_FIFO, size);
     client_info[i].max_FIFO = max(client_info[i].max_FIFO, size);
@@ -534,10 +522,10 @@ void check_if_sent(evutil_socket_t descriptor, short ev, void *arg) {
                 client_info[i].sent_sth = 0;
             }
             else {
-                //TODO: porzuc klienta
+                //porzuc klienta
+                fprintf(stderr, "INFO: Klient %d nieaktywny. Przucam.\n",i);
                 free_a_client(i);
-                clear_client_info(i);
-                fprintf(stderr, "KLIENT %d NIEAKTYWNY -> PORZUC\n",i);
+                clear_client_info(i);                
             }    
         }
     }
@@ -546,7 +534,7 @@ void check_if_sent(evutil_socket_t descriptor, short ev, void *arg) {
 //wydarzenia kontrolujace stan polaczenia z UDP - porzuca klienta, gdy ten nie 
 //przesle niczego przez 1 s
 void set_control_event(){
-    control_event = event_new(base, NULL, EV_PERSIST, check_if_sent, NULL);
+    control_event = event_new(base, sock_udp, EV_PERSIST, check_if_sent, NULL);
     if(!control_event) syserr("event_new control_event"); //TODO err
     struct timeval wait_time = { 1, 0 };
     if (event_add(control_event,&wait_time) == -1) syserr("event_add control_event");
@@ -570,7 +558,7 @@ void add_new_client(char * datagram, struct in6_addr sin_addr, unsigned short si
         //set_control_event(id);
     }
     else 
-        syserr("Bledny datagram poczatkowy\n");
+        fprintf(stderr, "ERROR: bledny datagram poczatkowy: %s\n",datagram);
 }
 
 //przetwarza datagram UPLOAD o numerze nr i dlugosci len od uzytkownika clientid
@@ -584,20 +572,11 @@ void process_UPLOAD(char * datagram, int nr, int clientid, int len) {
         int header_len = ptr - datagram + 1;
         int data_len = len - header_len; 
         if (DEBUG) printf("header_size = %d\n", header_len);
-        
-        //TODO: if data_len > BUF_SIZE -> zapisuje od poczatku koniec danychw cakym buforze + komunikat
 
-        if (client_info[clientid].buf_count == fifo_queue_size) {
-            //fprintf(stderr, "client_info[clientid].buf_count %d\n",client_info[clientid].buf_count);
-            //fprintf(stderr, "size, ktory przewazyl: %d\n",data_len );
-            syserr("przepelnienie bufora");
-        } 
-        
         memcpy(buf_FIFO[clientid] + client_info[clientid].buf_count, datagram+header_len, data_len);
         client_info[clientid].buf_count += data_len;
 
         if (client_info[clientid].buf_count > BUF_SIZE) syserr("przepelnienie bufora klienta");
-        //fprintf(stderr, "client_info[clientid].buf_count = %d\n",client_info[clientid].buf_count);
 
         update_min_max(clientid, client_info[clientid].buf_count);
 
@@ -606,14 +585,14 @@ void process_UPLOAD(char * datagram, int nr, int clientid, int len) {
             client_info[clientid].nr = nr;
         }    
         
-        int win = fifo_queue_size - client_info[clientid].buf_count;
-        if (DEBUG) printf("send_ACK_datagram(ack, win, clientid): (%d, %d, %d)\n",client_info[clientid].ack, win, clientid );
-        if (DEBUG) printf(" client_info[clientid].buf_count: %d\n", client_info[clientid].buf_count);
+        long int win = fifo_queue_size - client_info[clientid].buf_count;
+        if (DEBUG) printf("send_ACK_datagram(ack, win, clientid): (%li, %li, %d)\n",client_info[clientid].ack, win, clientid );
+        if (DEBUG) printf(" client_info[clientid].buf_count: %li\n", client_info[clientid].buf_count);
         send_ACK_datagram(client_info[clientid].ack, win, clientid);
     }
     else {
         if (DEBUG) printf("Ponownie otrzymano UPLOAD %d\n",nr);
-        int win = fifo_queue_size - client_info[clientid].buf_count;
+        long int win = fifo_queue_size - client_info[clientid].buf_count;
         send_ACK_datagram(client_info[clientid].ack, win, clientid); //w razie gdyby ACK sie zgubil
     } 
 }
@@ -625,15 +604,13 @@ void process_KEEPALIVE(int clientid) {
 
 //przetwarza datagram RETRANSMIT od klienta clientid i parametrze nr 
 void process_RETRANSMIT(int nr, int clientid){
-    int win = fifo_queue_size - client_info[clientid].buf_count;
+    long int win = fifo_queue_size - client_info[clientid].buf_count;
     if (DEBUG) printf("Zmachowano do RETRANSMIT\n");
     
     if (last_nr - nr >= BUF_LEN) {
         //przesylam cala tablice
         int beg = (last_nr + 1) % BUF_LEN;
         int i;
-        //za last_sent w tablicy (najwczesniejsze)
-        //TODO: konflikt oznaczen
         for (i = beg; i < BUF_LEN; i++) {
             char * datagram = malloc(176 * interval);
             memset(datagram, 0, 176 * interval);
@@ -703,7 +680,7 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
     else {
         if (DEBUG) {
             (void) printf("read through UDP from [adres:%d]: %zd bytes: %.*s\n", ntohs(client_udp.sin6_port), len,
-                    (int) len, datagram); //*s oznacza odczytaj z buffer tyle bajtów ile jest podanych w (int) len (do oczytywania stringow, ktore nie sa zakonczona znakiem konca 0
+                    (int) len, datagram); 
             printf("DATAGRAM: %s\n", datagram);
         }    
 
@@ -714,18 +691,17 @@ void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
         } 
         else {
             //stary klient, obsluz jego datagram
-            int nr;    
-            char data[BUF_SIZE+1] = { 0 };
+            long int nr;             
             client_info[clientid].sent_sth = 1;
 
             //KEEPALIVE
             if (strcmp(datagram, "KEEPALIVE\n") == 0)                 
                 process_KEEPALIVE(clientid);            
             //UPLOAD
-            else if (sscanf(datagram, "UPLOAD %d", &nr) == 1)
+            else if (sscanf(datagram, "UPLOAD %li", &nr) == 1)
                 process_UPLOAD(datagram, nr, clientid, len);            
             //RETRANSMIT
-            else if (sscanf(datagram, "RETRANSMIT %d", &nr) == 1) 
+            else if (sscanf(datagram, "RETRANSMIT %li", &nr) == 1) 
                 process_RETRANSMIT(nr, clientid);                          
             //BLAD
             else 
@@ -746,7 +722,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
     int num_clients = 0;
     int i;
     for(i = 0; i < MAX_CLIENTS; i++) {
-        if(activated[i] && client_info[i].buf_state == ACTIVE) { //TODO: zmienic na clients[i].ev ?      
+        if(activated[i] && client_info[i].buf_state == ACTIVE) {      
             inputs[num_clients].data = buf_FIFO[i];
             inputs[num_clients].len = client_info[i].buf_count;
             num_clients++;
@@ -764,9 +740,9 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         if(activated[i]) {             
             if (DEBUG) {
                 fprintf(stderr, "size = %d\n",size);
-                fprintf(stderr, "output_size = %d\n",output_size);
+                fprintf(stderr, "output_size = %zu\n",output_size);
             }    
-            send_DATA_datagram(output_buf, last_nr, client_info[i].ack, fifo_queue_size - client_info[i].buf_count, i, size); //TODO to nie powinno byc ile, ale output_size, ale wtedy nie dziala
+            send_DATA_datagram(output_buf, last_nr, client_info[i].ack, fifo_queue_size - client_info[i].buf_count, i, size); 
             anyone_in = 1;
         }
 
@@ -780,12 +756,10 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
         }
     }
 
-
-
     //jesli wyslal komukolwiek, zwieksza licznik, zapisuje dane
     if (anyone_in) {
         last_nr++;
-        int position = (last_nr % BUF_LEN) * 176 * interval;
+        long int position = (last_nr % BUF_LEN) * 176 * interval;
         memcpy(&server_FIFO[position],output_buf,size);
 
     }     
@@ -795,7 +769,7 @@ void mix_and_send(evutil_socket_t descriptor, short ev, void *arg) {
 //tworzy kontekst dla wydarzen
 void set_base() {
     base = event_base_new();
-    if(!base) syserr("Error creating base."); //TODO: probuje dalej
+    if (!base) syserr("Error creating base."); 
 }
 
 //tworzy gniazdo TCP
@@ -814,18 +788,14 @@ evutil_socket_t create_TCP_socket() {
     sin.sin6_addr = in6addr_any;
     sin.sin6_port = htons(port_num);
     if(bind(sock, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
-        syserr("bind");
+        syserr("Bind");
     }
 
-    if(listen(sock, 5) == -1) syserr("listen"); // 5 = backlog tells you how many connections may wait in the queue before you accept one
+    if(listen(sock, 5) == -1) syserr("listen"); // 5 = max w kolejce
 
-    //TODO: w obu plikach, dac do headera
     int flag = 1;
     int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int));    
-    if (result < 0) {
-        fprintf(stderr, "setsockopt tcp\n");
-        //TODO: reboot ???
-    }    
+    if (result < 0) syserr("setsockopt tcp");
     return sock;
 }
 
@@ -852,9 +822,7 @@ void set_client_event() {
 void set_read_event() {
     read_event =
         event_new(base, sock_udp, EV_READ|EV_PERSIST, read_from_udp, NULL); 
-    if(!read_event) syserr("event_new");
-   // if (event_priority_set(read_event, 1) < 0)
-    //    syserr("event priority set"); 
+    if(!read_event) syserr("event_new"); 
     if(event_add(read_event,NULL) == -1) syserr("event_add udp");
 }
 
@@ -921,36 +889,3 @@ int main (int argc, char *argv[]) {
 	return 0;
 }
 
-/* TODO:
-
-- event_free wszedzie
-
-
-1) W przypadku wykrycia kłopotów z połączeniem przez serwer, powinien on zwolnić wszystkie zasoby związane z tym klientem
-
--> sprawdz, czy sie cos tworzy zanim sie nawiaze polaczenie, jak tak, to zwolnij
-uwaga! to sie tylko dotyczy TCP! 
-
-
-2) Jeśli serwer przez sekundę nie odbierze żadnego datagramu UDP, uznaje połączenie za kłopotliwe. 
-   Zezwala się jednakże na połączenia TCP bez przesyłania danych UDP, jeśli się chce zobaczyć tylko raporty.
-
-   -> wiec tutaj chyba bede musiala trzymac czas dla kazdego kleinta 
-   tablica czasow[MAX_CLIENTS]
-
-   i sprawdzac dla kazdego, czy juz nie bylo timeoutu
-
-   ale tez updateowac te czasy przy odbiorze keepalive (bo to wystarczy)
-
-
-3) ucinanie adresow IPv4 do swojej dlugosci z IPv6
-
-4) ustawianie wartosci kolejek dla klientow -> sprawdzanie ???
-
-5) poprawić stałe wszytskie
-
-6) czy na pewno inty mają być w wielu miejscah, a nie long long inty na przyklad
-
-7) poprawic styl retransmisji
-
-*/

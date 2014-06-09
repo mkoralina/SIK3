@@ -23,18 +23,18 @@ evutil_socket_t sock_udp = -1;
 evutil_socket_t sock_tcp = -1;
 struct sockaddr_in6 server_address;
 socklen_t rcva_len = (socklen_t) sizeof(server_address);
-int last_sent = -1; //numer ostatnio wyslanego datagramu DATA
-int ack = -1;
-int win = 0;
+long int last_sent = -1; //numer ostatnio wyslanego datagramu DATA
+long int ack = -1;
+long int win = 0;
 int clientid = -1; //nr = -1 oznacza brak identyfikacji
-int nr_expected = -1;
-int nr_max_seen = -1;
+long int nr_expected = -1;
+long int nr_max_seen = -1;
 char last_UPLOAD[DATAGRAM_SIZE] = {0};
 int last_UPLOAD_len;
-char last_RETRANSMIT[RETRAN_SIZE] = {0};
-int last_RETRANSMIT_len;
+//char last_RETRANSMIT[RETRAN_SIZE] = {0};
+//int last_RETRANSMIT_len;
 int UPLOAD_pending = 0;
-int RETRANSMIT_pending = 0;
+//int RETRANSMIT_pending = 0;
 int DATAs_since_last_datagram = -1; //licznik rusza po otrzymaniu 1. DATA
 int events_set = 0;
 int eof = 0;
@@ -46,6 +46,35 @@ struct event *send_event;
 struct event *keepalive_event;
 struct event *udp_event;
 struct event *tcp_event;
+
+
+void free_events();
+void get_parameters(int argc, char *argv[]);
+static void catch_int (int sig);
+void send_to_server(evutil_socket_t descriptor, short ev, void *arg);
+void send_KEEPALIVE_datagram(evutil_socket_t descriptor, short ev, void *arg);
+void set_keepalive_event();
+void set_send_event();
+void set_events();
+void send_datagram(char *datagram, int len);
+void send_CLIENT_datagram(uint32_t id);
+void send_UPLOAD_datagram(void *data, long int no, int data_size);
+void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg);
+void set_stdin_event();
+void send_RETRANSMIT_datagram(long int no);
+void match_and_execute(char *datagram, int len);
+void read_from_udp(evutil_socket_t descriptor, short ev, void *arg);
+void set_udp_event();
+void read_CLIENT_datagram();
+void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg);
+void set_tcp_event();
+void set_base();
+void clear_data();
+evutil_socket_t create_TCP_socket();
+evutil_socket_t create_UDP_socket();   
+void clear_data();
+void reboot();
+
 
 
 //usuwa wszystkie wydarzenia
@@ -151,126 +180,10 @@ void send_to_server(evutil_socket_t descriptor, short ev, void *arg) {
     */  
 }
 
-//czyta dane ze standardowego wejscia i przesyla do serwera po UDP
-void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
-    char buf[BUF_SIZE+1];
-    memset(buf, 0, sizeof(buf));
-    
-    if (ack > last_sent && win > 0) { ;           
-        if (DEBUG) printf("read\n");
-        int to_read = min(win, BUF_SIZE); 
-        int r = read(0, buf, to_read);
-        if(r < 0) {
-            fprintf(stderr, "ERROR: read < 0 read_from_stdin\n");
-            if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
-        }    
-        if(r == 0) {            
-            fprintf(stderr, "INFO: read stdin reached EOF\n");
-            catch_int(SIGINT);                           
-        }
-        if (r > 0) {
-            last_sent++;
-            send_UPLOAD_datagram(buf, last_sent, r);                            
-        }
-        memset(buf, 0, sizeof(buf));
-    } 
-    else {
-        //blokuje stdin
-        if (event_del(stdin_event) == -1) syserr("Can't close stdin_event");   
-    }      
-}
-
-//wydarzenie czytajace dane od klienta z stdin
-void set_stdin_event() {
-    int stdin = 0;
-    stdin_event =
-        event_new(base, stdin, EV_READ|EV_PERSIST, read_from_stdin, NULL); 
-    if(!stdin_event) {
-        fprintf(stderr, "ERROR: event_new stdin_event\n");
-        reboot();
-    }
-    if(event_add(stdin_event,NULL) == -1) {
-        fprintf(stderr, "ERROR: event_add stdin_event\n");
-        reboot();
-    } 
-}
-
-//czyta po TCP 1. datagram CLIENT oraz raporty, ktore wyswietla na stderr
-void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg)
-{  
-    if (clientid < 0) {
-        read_CLIENT_datagram();
-    }
-
-    char buf[BUF_SIZE+1];
-    int r = read(sock_tcp, buf, BUF_SIZE);
-    if(r == -1) {
-        fprintf(stderr, "ERROR: read<0 read_from_tcp\n");
-        reboot();
-    }
-    else {    
-        buf[r] = 0;  
-        fprintf(stderr, "%s\n",buf);
-    }    
-    return;
-}
-
-//wydarzenie czytajace z TCP
-void set_tcp_event() {
-    tcp_event =
-        event_new(base, sock_tcp, EV_READ|EV_PERSIST, read_from_tcp, NULL); 
-    if(!tcp_event) {
-        fprintf(stderr, "ERROR: event_new tcp_event\n");
-        reboot();
-    }    
-    if(event_add(tcp_event,NULL) == -1) {
-        fprintf(stderr, "ERROR: event_add tcp_event\n");
-        reboot();
-    }    
-}
-
-//czyta datagramy od serwera przesylane po UDP
-void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
-
-    ssize_t len;
-    char datagram[RCV_SIZE+1];
-    
-    int flags = 0; 
-    struct sockaddr_in6 server_udp;
-    socklen_t rcva_len = (ssize_t) sizeof(server_udp);
-        
-    memset(datagram, 0, sizeof(datagram)); 
-    len = recv(sock_udp, datagram, RCV_SIZE, flags);
-
-    if (len < 0) {
-        fprintf(stderr, "ERROR: recv < 0 read_from_udp\n");
-        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
-    }    
-    else { 
-        //matchowanie datagramu do wzorcow i dalsza obsluga   
-        match_and_execute(datagram, len);    
-    }    
-}
-
-//wydarzenie czytajace z UDP
-void set_udp_event() {
-    udp_event =
-        event_new(base, sock_udp, EV_READ|EV_PERSIST, read_from_udp, NULL); 
-    if(!udp_event) {
-        fprintf(stderr, "ERROR: event_new udp_event\n");
-        reboot();
-    }
-    if(event_add(udp_event,NULL) == -1) {
-        fprintf(stderr, "ERROR: event_add udp_event\n");
-        reboot();
-    }    
-}
-
 //przesyla po UDP datagram KEEPALIVE 
 void send_KEEPALIVE_datagram(evutil_socket_t descriptor, short ev, void *arg) {
     char *datagram = "KEEPALIVE\n";
-    send_datagram(datagram, strlen(datagram));
-    return 0;    
+    send_datagram(datagram, strlen(datagram));   
 }
 
 //wydarzenie przesylajace co 0,1s datagram KEEPALIVE
@@ -342,13 +255,13 @@ void send_CLIENT_datagram(uint32_t id) {
 }
 
 //wysyla no-ty datagram typu UPLOAD z danymi data o dlugosci data_size
-void send_UPLOAD_datagram(void *data, int no, int data_size) { 
-    int num = no;
+void send_UPLOAD_datagram(void *data, long int no, int data_size) { 
+    long int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 -> log10(0) -> blad szyny
     int str_size = (int) ((floor(log10(num))+1)*sizeof(char));
     
     char str[str_size];
-    sprintf(str, "%d", no);
+    sprintf(str, "%li", no);
 
     char* type= "UPLOAD";
     char* datagram = malloc(strlen(type) + strlen(str) + 2 + data_size);
@@ -371,14 +284,58 @@ void send_UPLOAD_datagram(void *data, int no, int data_size) {
     free(datagram);    
 }
 
+//czyta dane ze standardowego wejscia i przesyla do serwera po UDP
+void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
+    char buf[BUF_SIZE+1];
+    memset(buf, 0, sizeof(buf));
+    
+    if (ack > last_sent && win > 0) { ;           
+        if (DEBUG) printf("read\n");
+        int to_read = min(win, BUF_SIZE); 
+        int r = read(0, buf, to_read);
+        if(r < 0) {
+            fprintf(stderr, "ERROR: read < 0 read_from_stdin\n");
+            if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+        }    
+        if(r == 0) {            
+            fprintf(stderr, "INFO: read stdin reached EOF\n");
+            catch_int(SIGINT);                           
+        }
+        if (r > 0) {
+            last_sent++;
+            send_UPLOAD_datagram(buf, last_sent, r);                            
+        }
+        memset(buf, 0, sizeof(buf));
+    } 
+    else {
+        //blokuje stdin
+        if (event_del(stdin_event) == -1) syserr("Can't close stdin_event");   
+    }      
+}
+
+//wydarzenie czytajace dane od klienta z stdin
+void set_stdin_event() {
+    int stdin = 0;
+    stdin_event =
+        event_new(base, stdin, EV_READ|EV_PERSIST, read_from_stdin, NULL); 
+    if(!stdin_event) {
+        fprintf(stderr, "ERROR: event_new stdin_event\n");
+        reboot();
+    }
+    if(event_add(stdin_event,NULL) == -1) {
+        fprintf(stderr, "ERROR: event_add stdin_event\n");
+        reboot();
+    } 
+}
+
 //wysyla prosbe o retransmisje serwer->klient datagramow DATA o numerach <= no 
-void send_RETRANSMIT_datagram(int no) {
-    int num = no;
+void send_RETRANSMIT_datagram(long int no) {
+    long int num = no;
     if (!no) num = 1; //na wypadek gdyby nr = 0 i log(0)
     int str_size = (int) ((floor(log10(num))+1)*sizeof(char));
 
     char str[str_size];
-    sprintf(str, "%d", no);
+    sprintf(str, "%li", no);
 
     char* type= "RETRANSMIT";
     char* datagram = malloc(strlen(type) + strlen(str) + 2);
@@ -388,7 +345,99 @@ void send_RETRANSMIT_datagram(int no) {
     free(datagram);
 }
 
+//dopasowuje datagram o dlugosci len do wzorca, obsluguje jego odbior
+void match_and_execute(char *datagram, int len) {
+    long int nr;
+    //DATA
+    if (sscanf(datagram, "DATA %li %li %li", &nr, &ack, &win) == 3) {
+        DATAs_since_last_datagram++;
 
+        if (ack == last_sent+1 && win > 0) {
+            if(event_add(stdin_event,NULL) == -1) {
+                fprintf(stderr, "ERROR: event_add stdin_event\n");
+                if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+            }    
+        }
+        if (DATAs_since_last_datagram > MAX_DATAS && last_sent >= 0 && last_sent == ack) { 
+            fprintf(stderr, "RETRANSMISJA KLIENT -> SERWER\n");
+            UPLOAD_pending = 1;
+            DATAs_since_last_datagram = 0;
+            //if(event_add(send_event,NULL) == -1) syserr("event_add"); 
+        }
+        //fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
+        
+        char * ptr = memchr(datagram, '\n', len);
+        int header_len = ptr - datagram + 1;
+        int data_len = len - header_len; 
+        if (DEBUG) printf("header_size = %d\n", header_len);
+
+        if (nr_expected == -1) {
+            nr_expected = nr + 1;
+            write(1,datagram+header_len,data_len); 
+        }
+        else if (nr > nr_expected) {
+            if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {                
+                send_RETRANSMIT_datagram(nr_expected);
+            }
+            else {
+                nr_expected = nr + 1;
+                write(1,datagram+header_len,data_len);
+            }
+        }
+        else if (nr == nr_expected) {
+            write(1,datagram+header_len,data_len);
+        }
+        nr_max_seen = max(nr, nr_max_seen);
+
+    }
+    //ACK
+    else if (sscanf(datagram, "ACK %li %li", &ack, &win) == 2) {
+        if (ack == last_sent + 1) 
+            DATAs_since_last_datagram = 0;
+        //odblokowanie czytania z stdin
+        if (ack == last_sent+1 && win > 0) {
+            if (event_add(stdin_event,NULL) == -1) syserr("event_add");
+        }
+        //fprintf(stderr, "Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
+    }
+    else 
+        fprintf(stderr, "WARNING: Niewlasciwy format datagramu\n");
+} 
+
+//czyta datagramy od serwera przesylane po UDP
+void read_from_udp(evutil_socket_t descriptor, short ev, void *arg) {
+
+    ssize_t len;
+    char datagram[RCV_SIZE+1];
+    
+    int flags = 0; 
+        
+    memset(datagram, 0, sizeof(datagram)); 
+    len = recv(sock_udp, datagram, RCV_SIZE, flags);
+
+    if (len < 0) {
+        fprintf(stderr, "ERROR: recv < 0 read_from_udp\n");
+        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+    }    
+    else { 
+        //matchowanie datagramu do wzorcow i dalsza obsluga   
+        match_and_execute(datagram, len);    
+    }    
+}
+
+//wydarzenie czytajace z UDP
+void set_udp_event() {
+    udp_event =
+        event_new(base, sock_udp, EV_READ|EV_PERSIST, read_from_udp, NULL); 
+    if(!udp_event) {
+        fprintf(stderr, "ERROR: event_new udp_event\n");
+        reboot();
+    }
+    if(event_add(udp_event,NULL) == -1) {
+        fprintf(stderr, "ERROR: event_add udp_event\n");
+        reboot();
+    }    
+}
 
 //potwierdza nawiazanie polaczenia TCP z serwerem i odbiera numer identyfikacyjny
 void read_CLIENT_datagram() {
@@ -413,6 +462,40 @@ void read_CLIENT_datagram() {
     //przesyla UDP potwierdzenie odebrania datagramu
     send_CLIENT_datagram(clientid);  
     set_keepalive_event();
+}
+
+//czyta po TCP 1. datagram CLIENT oraz raporty, ktore wyswietla na stderr
+void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg)
+{  
+    if (clientid < 0) {
+        read_CLIENT_datagram();
+    }
+
+    char buf[BUF_SIZE+1];
+    int r = read(sock_tcp, buf, BUF_SIZE);
+    if(r == -1) {
+        fprintf(stderr, "ERROR: read<0 read_from_tcp\n");
+        reboot();
+    }
+    else {    
+        buf[r] = 0;  
+        fprintf(stderr, "%s\n",buf);
+    }    
+    return;
+}
+
+//wydarzenie czytajace z TCP
+void set_tcp_event() {
+    tcp_event =
+        event_new(base, sock_tcp, EV_READ|EV_PERSIST, read_from_tcp, NULL); 
+    if(!tcp_event) {
+        fprintf(stderr, "ERROR: event_new tcp_event\n");
+        reboot();
+    }    
+    if(event_add(tcp_event,NULL) == -1) {
+        fprintf(stderr, "ERROR: event_add tcp_event\n");
+        reboot();
+    }    
 }
 
 //otwiera gniazdo UDP
@@ -470,66 +553,6 @@ evutil_socket_t create_UDP_socket() {
     
     return sock;
 }   
-
-//dopasowuje datagram o dlugosci len do wzorca, obsluguje jego odbior
-void match_and_execute(char *datagram, int len) {
-    int nr;
-    //DATA
-    if (sscanf(datagram, "DATA %d %d %d", &nr, &ack, &win) == 3) {
-        DATAs_since_last_datagram++;
-
-        if (ack == last_sent+1 && win > 0) {
-            if(event_add(stdin_event,NULL) == -1) {
-                fprintf(stderr, "ERROR: event_add stdin_event\n");
-                if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
-            }    
-        }
-        if (DATAs_since_last_datagram > MAX_DATAS && last_sent >= 0 && last_sent == ack) { 
-            fprintf(stderr, "RETRANSMISJA KLIENT -> SERWER\n");
-            UPLOAD_pending = 1;
-            DATAs_since_last_datagram = 0;
-            //if(event_add(send_event,NULL) == -1) syserr("event_add"); 
-        }
-        //fprintf(stderr, "Zmatchowano do DATA, nr = %d, ack = %d, win = %d\n", nr, ack, win);
-        
-        char * ptr = memchr(datagram, '\n', len);
-        int header_len = ptr - datagram + 1;
-        int data_len = len - header_len; 
-        if (DEBUG) printf("header_size = %d\n", header_len);
-
-        if (nr_expected == -1) {
-            nr_expected = nr + 1;
-            write(1,datagram+header_len,data_len); 
-        }
-        else if (nr > nr_expected) {
-            if (nr_expected >= nr - retransfer_lim && nr_expected > nr_max_seen) {                
-                send_RETRANSMIT_datagram(nr_expected);
-            }
-            else {
-                nr_expected = nr + 1;
-                write(1,datagram+header_len,data_len);
-            }
-        }
-        else if (nr == nr_expected) {
-            write(1,datagram+header_len,data_len);
-        }
-        nr_max_seen = max(nr, nr_max_seen);
-
-    }
-    //ACK
-    else if (sscanf(datagram, "ACK %d %d", &ack, &win) == 2) {
-        if (ack == last_sent + 1) 
-            DATAs_since_last_datagram = 0;
-        //odblokowanie czytania z stdin
-        if (ack == last_sent+1 && win > 0) {
-            if (event_add(stdin_event,NULL) == -1) syserr("event_add");
-        }
-        //fprintf(stderr, "Zmatchowano do ACK, ack = %d, win = %d\n", ack, win);        
-    }
-    else 
-        fprintf(stderr, "WARNING: Niewlasciwy format datagramu\n");
-} 
-
 
 //tworzy kontekst dla wydarzen
 void set_base() {

@@ -56,7 +56,6 @@ void mixer(struct mixer_input* inputs, size_t n, void* output_buf,
     int16_t * int_output = (int16_t *) output_buf;
 
     int16_t num;
-    int16_t sum;
     int j;
     
     for (j = 0; j < *output_size; j++) {
