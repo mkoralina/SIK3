@@ -138,7 +138,7 @@ void get_parameters(int argc, char *argv[]) {
 void free_a_client(int i) {
     if (clients[i].ev) {
         //TODO: ju to wczesniej robie w jednej fuynkcji, w drugiej nie + bledy
-        event_del(clients[i].ev);
+        if (event_del(clients[i].ev) == -1) syserr("Can't delete client[i].ev");
         event_free(clients[i].ev);
         memset(buf_FIFO[i],0,fifo_queue_size);
         activated[i] = 0;
@@ -164,16 +164,16 @@ void free_buf_FIFOs() {
 //usuwa wszystkie wydarzenia
 void free_events() {
     //TODO: bledy
-    event_del(report_event);
+    if (event_del(report_event) == -1) syserr("Can't delete report_event");
     event_free(report_event);
     
-    event_del(mix_send_event);
+    if (event_del(mix_send_event) == -1) syserr("Can't delete mix_send_event");
     event_free(mix_send_event);
     
-    event_del(read_event);
+    if (event_del(read_event) == -1) syserr("Can't delete read_event");
     event_free(read_event);
     
-    event_del(client_event);
+    if (event_del(client_event) == -1) syserr("Can't delete client_event");
     event_free(client_event);
 }
 

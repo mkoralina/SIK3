@@ -8,11 +8,11 @@
 #define PORT  14666
 #define BUF_SIZE 8000
 #define RCV_SIZE 64000 
-#define NAME_SIZE 100 //TODO: ile to ma byc?
+#define NAME_SIZE 100 
 #define RETRANSMIT_LIMIT 10 
-#define DATAGRAM_SIZE 10000  //TODO: musi byc wiekszy niz BUF_SIZE !
+#define DATAGRAM_SIZE 10000 //wiekszy niz BUF_SIZE
 #define RETRAN_SIZE 40 
-#define MAX_DATAS 20 
+#define MAX_DATAS 10 //TODO: docelowo 1 
 
 #define DEBUG 0
 
@@ -47,22 +47,22 @@ struct event *keepalive_event;
 struct event *udp_event;
 struct event *tcp_event;
 
-//TODO: ify -> bledy
+
 //usuwa wszystkie wydarzenia
 void free_events() {
-    event_del(stdin_event); //TODO: czy w ogole jest aktywne!
-    event_free(stdin_event); //TODO: czy w ogole jest aktywne!
+    if (event_del(stdin_event) == -1) syserr("Can't delete stdin_event"); 
+    event_free(stdin_event); 
     
-    event_del(send_event); //TODO: to samo tutaj
-    event_free(send_event); //TODO: to samo tutaj
+    if (event_del(send_event) == -1) syserr("Can't delete send_event"); 
+    event_free(send_event); 
     
-    event_del(keepalive_event);
+    if (event_del(keepalive_event) == -1) syserr("Can't delete keepalive_event"); 
     event_free(keepalive_event);
 
-    event_del(udp_event);
+    if (event_del(udp_event) == -1) syserr("Can't delete udp_event"); 
     event_free(udp_event);
 
-    event_del(tcp_event);
+    if (event_del(tcp_event) == -1) syserr("Can't delete tcp_event"); 
     event_free(tcp_event);
     events_set = 0;
 }
@@ -78,7 +78,7 @@ struct addrinfo addr_hints = {
     .ai_next = NULL
 };
 
-//TODO: obsluga blednego formatu
+//TODO: obsluga blednego formatu wejscia
 //wczytuje wartosci parametrow z wejscia
 void get_parameters(int argc, char *argv[]) {    
     int server_name_set = 0;
@@ -112,7 +112,6 @@ void get_parameters(int argc, char *argv[]) {
     }
 }
 
-//TODO
 //obsluguje Ctrl+C
 static void catch_int (int sig) {
     fprintf(stderr, "INFO: Closing...\n");
@@ -132,7 +131,8 @@ void send_to_server(evutil_socket_t descriptor, short ev, void *arg) {
         snd_len = send(sock_udp, last_UPLOAD, last_UPLOAD_len, flags);            
         if (snd_len != last_UPLOAD_len) {  
             fprintf(stderr, "ERROR: send send_to_server\n");
-            if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); 
+            if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
+            reboot(); 
         }
         else
             UPLOAD_pending = 0;
@@ -142,7 +142,7 @@ void send_to_server(evutil_socket_t descriptor, short ev, void *arg) {
         snd_len = send(sock_udp, last_RETRANSMIT, last_RETRANSMIT_len, flags);
         if (snd_len != last_RETRANSMIT_len) {  
             fprintf(stderr, "ERROR: send send_to_server\n");
-            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do reboot lbo cos, nie wiem, czy to w ogole reboot ma wlaczac..
+            if(event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); 
         }
         else
             RETRANSMIT_pending = 0;
@@ -176,7 +176,7 @@ void read_from_stdin(evutil_socket_t descriptor, short ev, void *arg) {
     } 
     else {
         //blokuje stdin
-        event_del(stdin_event);   
+        if (event_del(stdin_event) == -1) syserr("Can't close stdin_event");   
     }      
 }
 
@@ -198,7 +198,6 @@ void set_stdin_event() {
 //czyta po TCP 1. datagram CLIENT oraz raporty, ktore wyswietla na stderr
 void read_from_tcp(evutil_socket_t descriptor, short ev, void *arg)
 {  
-    // TODO: kontrola, czy jest caly czas polaczenie, czyli pewnie jakiś timeout trzeba ustawic!
     if (clientid < 0) {
         read_CLIENT_datagram();
     }
@@ -324,7 +323,8 @@ void send_datagram(char *datagram, int len) {
     if (snd_len != len) {  
         fprintf(stderr, "ERROR: send send_datagram\n");
         free(datagram);
-        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); //TODO: to raczej przeniesc do gory
+        if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak"); 
+        reboot();
     }        
 }
 
@@ -446,7 +446,7 @@ evutil_socket_t create_UDP_socket() {
     }
 
     struct timeval tv;
-    tv.tv_sec = 1; //TODO: zmien na 1s
+    tv.tv_sec = 1; 
     tv.tv_usec = 0;
 
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
@@ -484,7 +484,7 @@ void match_and_execute(char *datagram, int len) {
                 if (event_base_loopbreak(base) == -1) syserr("event_base_loopbreak");
             }    
         }
-        if (DATAs_since_last_datagram > MAX_DATAS && last_sent >= 0 && last_sent == ack) { //TODO: zmieniona wartosc
+        if (DATAs_since_last_datagram > MAX_DATAS && last_sent >= 0 && last_sent == ack) { 
             fprintf(stderr, "RETRANSMISJA KLIENT -> SERWER\n");
             UPLOAD_pending = 1;
             DATAs_since_last_datagram = 0;
@@ -643,12 +643,3 @@ int main (int argc, char *argv[]) {
     return 0;
 }
 
-/* 
-
-TODO:
-
-5) zamiast czekać pół minuty mżna trzymać czas od przedostatniego reboota (zapisywać zawsze dwa ostatnie)
- i czkeać max( 500ms - (obecny_czas - czas_przedostatniego_reboota), 0) w milisekundach
-
-
-*/
